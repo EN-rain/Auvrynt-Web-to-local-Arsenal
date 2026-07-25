@@ -1,0 +1,225 @@
+# WEB_AGENT_GUIDE.md
+
+## Scope
+
+This guide applies to web projects: websites, web applications, frontend SPAs, full-stack apps with a web UI.
+
+Do not apply this to Godot projects, desktop applications, CLI tools, or pure backend services unless they expose a web interface.
+
+---
+
+## Core Anti-Hallucination Rules
+- **Never invent** a tool name, parameter, return field, command, process ID, URL, file path, screenshot, test result, or browser state.
+- **Use only tools** that are actually exposed in the current session.
+- **Tool availability is evidence. Tool names imagined from documentation are not available tools.**
+- Before calling a specialized tool, confirm its exact tool name and schema are available.
+- If a desired specialized tool is unavailable, use the safest available fallback or report the limitation.
+- Do not describe a tool call as completed unless its result was returned successfully.
+- Do not assume a development server is running, or that a URL, port, browser page, process, or screenshot exists.
+- Do not reuse stale process IDs, workspace IDs, page IDs, or browser session IDs.
+- Do not guess framework commands when package scripts can be inspected.
+- Do not call multiple overlapping tools that produce the same information without a clear reason.
+- Do not load unrelated Godot, desktop, mobile, or general software tools for a normal web task.
+- Do not continue calling tools after the task is already verified.
+- When a tool result conflicts with memory or assumptions, trust the current tool result.
+
+---
+
+## Primary Tools
+
+**Workspace**
+- open workspace, read file, edit file, write file
+- file search, text search, project inspection
+
+**Process management**
+- start process (persistent — never use a blocking shell for a long-running dev server)
+- get process logs
+- list processes
+- stop process
+
+**Browser automation**
+- navigate
+- inspect DOM
+- inspect accessibility tree
+- capture page screenshot
+- inspect console messages
+- inspect network requests
+- viewport resize
+- click / type / wait
+
+**Image tools**
+- view image, inspect image, compare images
+
+**Build and validation**
+- package-manager scripts (lint, type-check, test, build)
+
+---
+
+## Web Task Classification
+Before executing any tool, classify the request into one primary task type:
+- **A. Project inspection:** Framework, scripts, dependencies detection.
+- **B. Bug fixing:** Code repair, hotfixes.
+- **C. New feature implementation:** Adding new behavior, endpoints, routes.
+- **D. UI implementation:** Adding visual layouts, components.
+- **E. Website cloning or visual matching:** Replicating design from screenshot/reference.
+- **F. Responsive testing:** Testing multiple viewports (Mobile, Tablet, Desktop).
+- **G. Runtime debugging:** Fixing console errors, network request failures.
+- **H. Build or test failure:** Compiler errors, test suites failure.
+- **I. Performance investigation:** Auditing speeds, payload size, caching.
+- **J. Accessibility review:** Inspecting roles, labels, contrast, keyboard focus.
+- **K. Content-only edit:** Modifying static texts, links, images.
+- **L. Deployment or production build preparation:** Validating build artifacts, production config.
+
+---
+
+## Tool Selection Decision Table
+
+| Need | Preferred tool group | Do not use first |
+|---|---|---|
+| Find component | Workspace search | Browser screenshot |
+| Start local app | Persistent process | Blocking shell |
+| See runtime UI | Browser | Source read alone |
+| Exact visual diff | Image comparison | Visual opinion only |
+| Console exception | Browser console | Screenshot only |
+| Failed API call | Network inspection | DOM inspection only |
+| Build error | Build/validation | Browser |
+| Change source | Edit tool | Shell redirection |
+| Framework behavior | Official docs | Guessing |
+| Mobile layout | Viewport/responsive tools | Desktop screenshot only |
+
+---
+
+## Required Workflow
+
+1. Inspect `package.json` and relevant framework configuration.
+2. Detect package manager from lockfiles (`package-lock.json` → npm, `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm, `bun.lockb` → bun).
+3. Read existing scripts before choosing commands. Never guess a dev command when scripts exist.
+4. Start the dev server using **persistent process tools** — never a blocking shell call.
+5. Confirm the real local URL from startup logs. Do not invent a URL or port.
+6. Navigate a browser tool to that URL.
+7. Inspect DOM, accessibility info, console errors, and failed network requests as needed.
+8. Capture screenshots at relevant viewport sizes.
+9. Make minimal source changes. Preserve the framework and existing architecture.
+10. Run the smallest useful validation after changes.
+11. Compare screenshots when matching a reference design.
+12. Stop unnecessary processes after the task is complete.
+
+---
+
+## Web-Specific Rules
+
+- Do not install dependencies without checking the existing package manager; ask only when installation is truly required.
+- Do not overwrite package configuration casually.
+- Prefer semantic DOM inspection combined with screenshots over screenshots alone.
+- Use browser tools only against the current project or an explicitly requested public URL.
+- Protect against unsafe URL schemes (e.g. `file://`, `javascript:`) and SSRF.
+- Allow `localhost` and `127.0.0.1` development URLs explicitly.
+- Do not expose cookies, authorization headers, or secrets in responses.
+- Do not download or copy proprietary website assets without permission.
+- When cloning a design, reproduce layout and behavior without copying protected branding or code.
+- Use exact viewport dimensions for reference comparisons.
+- Distinguish resemblance from exact pixel similarity in image comparisons.
+- Reinspect DOM after major re-renders before making further changes.
+- Do not reuse stale process IDs, page IDs, or session IDs.
+
+---
+
+## Task-Specific Playbooks
+
+### UI & Visual Matching Playbook
+1. Inspect reference design/screenshot.
+2. Locate components and styles.
+3. Implement changes section by section.
+4. Start dev server & capture candidate screenshot using identical viewport size.
+5. Use image comparison tool to find differences. Adjust and repeat.
+
+### Runtime Bug & Debugging Playbook
+1. Start/reuse dev server.
+2. Reproduce the bug in the browser.
+3. Inspect console logs and failed network requests.
+4. Locate responsible source file, patch it, and verify the console/network errors disappear.
+
+### Build/Test Failure Playbook
+1. Inspect package scripts, run failing script/command.
+2. Capture concise compiler/test error.
+3. Fix minimal source code, re-run command, verify success. Do not launch browser unless needed.
+
+---
+
+## Recommended Validation Sequence
+
+1. Targeted type check or linter on changed files
+2. Targeted tests
+3. Browser: page loads, no console errors, no failed requests
+4. Desktop screenshot
+5. Mobile screenshot (if responsive task)
+6. Screenshot comparison (if matching a reference)
+7. Full production build (if requested or when verifying deploy readiness)
+
+---
+
+## Framework Notes
+
+| Framework | Config file | Typical dev command |
+|---|---|---|
+| Vite | `vite.config.*` | `npm run dev` |
+| Next.js | `next.config.*` | `npm run dev` |
+| Nuxt | `nuxt.config.*` | `npm run dev` |
+| Angular | `angular.json` | `ng serve` |
+| Astro | `astro.config.*` | `npm run dev` |
+| SvelteKit | `svelte.config.*` | `npm run dev` |
+
+Always read `package.json scripts` to find the actual configured command. Do not assume defaults.
+
+---
+
+## Claim Verification Rules
+
+| Claim | Required Evidence |
+|---|---|
+| **"The server is running"** | Process tool reports status `running`, and URL is confirmed. |
+| **"The page loads"** | Browser tool successfully navigates to the page without error. |
+| **"The bug is fixed"** | Original reproduction steps no longer fail, and lints/tests pass. |
+| **"The UI matches the reference"** | Screenshots at matching viewports compared, diff box showing match percentage. |
+| **"The page is responsive"** | Viewport resized to Mobile (375x667), Tablet (768x1024), and Desktop (1280x800) with no clipping. |
+| **"The build passes"** | Actual successful build command output. |
+| **"No console errors"** | Console logs inspected during page flow, returned empty or clean. |
+| **"No failed requests"** | Network requests list inspected during page flow, showing only `2xx` / `3xx` codes. |
+
+Never make stronger claims than the evidence supports.
+
+---
+
+## Do Not Include
+
+- Godot editor bridge calls
+- Scene-tree tools
+- Game runtime tools
+- Collision tools
+- Godot export tools
+- C# debugger tools (unless the project has a C# backend)
+- Blender tools (unless the task involves editing a `.blend` source asset)
+
+---
+
+## Response Format
+When ending a web task, use this exact format:
+```text
+Changes:
+- ...
+
+Files:
+- ...
+
+Runtime verification:
+- ...
+
+Build/test verification:
+- ...
+
+Visual verification:
+- ...
+
+Notes/blockers:
+- ...
+```
