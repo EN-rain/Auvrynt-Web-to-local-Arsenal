@@ -1,179 +1,239 @@
-<p align="center">
-  <picture>
-    <img src="docs/assets/auvrynt-logo-light.png" alt="Auvrynt logo" width="140">
-  </picture>
-</p>
 
-<h1 align="center">Auvrynt</h1>
 
-<p align="center">Bring a Codex-style coding workflow to ChatGPT.</p>
+<h1 align="center">Auvrynt — Web-to-local Arsenal</h1>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@en-rain/auvrynt"><img alt="npm" src="https://img.shields.io/npm/v/%40en-rain%2Fauvrynt?style=flat-square" /></a>
-  <a href="https://github.com/EN-rain/Auvrynt-Weblocal-Arsenal/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/EN-rain/Auvrynt-Weblocal-Arsenal/ci.yml?style=flat-square&branch=main" /></a>
-  <a href="https://github.com/EN-rain/Auvrynt-Weblocal-Arsenal/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/npm/l/%40en-rain%2Fauvrynt?style=flat-square" /></a>
+  A self-hosted MCP server that gives AI coding assistants secure, real-time access to your local machine.
 </p>
 
-[![Auvrynt connected to ChatGPT](docs/assets/auvrynt-screenshot.png)](docs/assets/auvrynt-screenshot.png)
+<p align="center">
+  <a href="https://www.npmjs.com/package/@en-rain/auvrynt">
+    <img alt="npm" src="https://img.shields.io/npm/v/%40en-rain%2Fauvrynt?style=flat-square&color=cb3837" />
+  </a>
+  <a href="https://github.com/EN-rain/Auvrynt-Web-to-local-Arsenal/actions/workflows/ci.yml">
+    <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/EN-rain/Auvrynt-Web-to-local-Arsenal/ci.yml?style=flat-square&branch=main" />
+  </a>
+  <a href="https://github.com/EN-rain/Auvrynt-Web-to-local-Arsenal/blob/main/LICENSE">
+    <img alt="License" src="https://img.shields.io/npm/l/%40en-rain%2Fauvrynt?style=flat-square" />
+  </a>
+  <a href="https://nodejs.org">
+    <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D20.12-brightgreen?style=flat-square" />
+  </a>
+</p>
 
-**Give ChatGPT a secure connection to your own machine and Turn ChatGPT into Codex**
+---
 
-Auvrynt is a self-hosted MCP server that lets ChatGPT read, edit, search, and run code in your real local projects — your files, your tools, your terminal — without uploading anything to a third party. You run it on your machine, expose it through a tunnel you control, and approve the connection with a password only you have.
+## What is Auvrynt?
 
-## Installation
+Auvrynt is a **Model Context Protocol (MCP) server** you run on your own machine. It creates a secure, tunneled connection between AI clients like ChatGPT or Claude and your local development environment — your actual files, terminals, build tools, and project folders.
 
-Auvrynt requires Node `>=20.12 <27`. Node 22 LTS is recommended.
+No cloud upload. No third-party storage. Your code stays on your machine.
 
-Install the Auvrynt CLI:
+Connect once, then ask your AI to:
+
+- Open any approved project folder on your machine
+- Read, write, search, and edit real source files
+- Run shell commands, tests, builds, and package scripts
+- Work across web, .NET, Godot, and Blender projects
+- Capture screenshots of running apps
+- Use isolated Git worktrees for parallel coding sessions
+
+---
+
+## Quick Start
+
+> **Requires:** Node.js `>=20.12 <27` — Node 22 LTS recommended
+
+**Install globally:**
 
 ```bash
 npm install -g @en-rain/auvrynt
 ```
 
-Then initialize and start the server:
+**Set up and start:**
 
 ```bash
 auvrynt init
-auvrynt serve
+auvrynt start
 ```
 
-Or run it without a global install:
+**Or run directly without installing:**
 
 ```bash
 npx @en-rain/auvrynt init
-npx @en-rain/auvrynt serve
+npx @en-rain/auvrynt start
 ```
 
-During setup, Auvrynt asks for:
+During `auvrynt init`, you will be asked for:
 
-- the local project folders ChatGPT is allowed to open through Auvrynt
-- the local port, usually `7676`
-- your public HTTPS base URL from Cloudflare Tunnel, ngrok, Pinggy, Tailscale Funnel, or
-  another reverse proxy
+| Prompt | Description |
+|---|---|
+| Project roots | Local folder paths your AI is allowed to access |
+| Local port | Default is `7676` |
+| Public base URL | Your tunnel URL (Cloudflare, ngrok, Pinggy, Tailscale, etc.) |
 
-Use the public origin without `/mcp` during setup:
+> **Important:** Provide the base URL — do **not** include `/mcp`. Example: `https://your-tunnel.trycloudflare.com`
 
-```text
-https://your-tunnel-host.example.com
+---
+
+## Start the Server
+
+```bash
+# Clean animated mode (shows public URL + password, with live log indicator)
+auvrynt start
+
+# Verbose mode (shows full request logs in terminal)
+auvrynt serve
 ```
 
-You will configure your MCP client with the public `/mcp` URL after setup.
+After startup, the terminal shows:
 
-When the client connects, Auvrynt opens an Owner password approval page. Enter
-the Owner password printed by `auvrynt init`. It is also stored in:
+```
+Auvrynt is running!
 
-```text
+  Public URL:     https://your-tunnel.trycloudflare.com/mcp
+  Owner Password: <your-generated-password>
+
+  # CTRL + C to stop
+
+  ⠋ Logs active... (0 requests handled | Last: Started successfully)
+```
+
+---
+
+## Connect an MCP Client
+
+Paste your `/mcp` URL into your AI client (ChatGPT, Claude, etc.):
+
+```
+https://your-tunnel.trycloudflare.com/mcp
+```
+
+When the client connects, you will be prompted to approve the session using the **Owner password** shown at startup. The password is also stored in:
+
+```
 ~/.auvrynt/auth.json
 ```
 
-Keep that password private.
+Keep it private.
 
-## Connect Your MCP Client
+---
 
-The default local endpoint is:
+## Commands
 
-```text
-http://127.0.0.1:7676/mcp
+| Command | Description |
+|---|---|
+| `auvrynt init` | Run first-time setup or update your config |
+| `auvrynt start` | Start the server with clean animated output |
+| `auvrynt serve` | Start the server with verbose log output |
+| `auvrynt doctor` | Show your config, Node version, and dependency health |
+| `auvrynt config get` | Print your saved configuration |
+| `auvrynt config set publicBaseUrl <url>` | Update your public tunnel URL |
+
+**Override the tunnel URL for a one-off run:**
+
+```bash
+AUVRYNT_PUBLIC_BASE_URL=https://new-tunnel.example.com auvrynt start
 ```
 
-Most users should connect through a public HTTPS tunnel:
+---
 
-```text
-https://your-tunnel-host.example.com/mcp
-```
+## What Your AI Can Do
 
-## What ChatGPT Can Do
+Once connected and a workspace is opened, your AI assistant has access to **137 tools** across:
 
-Once connected, ChatGPT can open one of your approved project folders as a
-workspace. From there, it can inspect the repo, make scoped edits, run commands,
-and show you what changed.
+| Category | Capabilities |
+|---|---|
+| **Files** | Read, write, edit, search, glob, list directory |
+| **Shell** | Run commands, tests, builds, git, package scripts |
+| **Processes** | Start/stop persistent processes, tail logs |
+| **Web** | Launch dev servers, screenshot pages, inspect DOM |
+| **Images** | Inspect, compare, sprite-sheet splitting |
+| **.NET** | Inspect projects, restore, build, test, format |
+| **Godot** | Run projects, inspect scenes, C# build, GDScript diagnostics |
+| **Blender** | Scene audit, checkpoints, renders, export GLB |
+| **Git** | Worktree management, status, diff, branch ops |
 
-Auvrynt gives ChatGPT tools to:
+---
 
-- read, write, and edit files inside the opened workspace
-- search code and inspect directories
-- run shell commands for tests, builds, git, and package scripts
-- use isolated Git worktrees for parallel coding sessions
-- follow project instructions from `AGENTS.md` and `CLAUDE.md`
-- discover local agent skills from your skill folders
-- show tool cards and optional change summaries in ChatGPT Apps-compatible hosts
+## Project Routing
 
-## Mental Model
+Auvrynt automatically selects the right workflow guide based on your project type:
 
-Auvrynt is remote access to selected local folders.
+| Project signals | Guide loaded |
+|---|---|
+| `package.json` + `vite.config.ts` / web framework | Web Agent Guide |
+| `App.sln` / `.csproj` without `project.godot` | Software Agent Guide |
+| `project.godot` (any language) | Godot Agent Guide |
+| `.blend` files | Blender Agent Guide |
 
-You decide which roots are allowed. The MCP client still has powerful local
-capabilities inside an opened workspace, including shell execution. Treat a
-connected client like a trusted coding partner with access to your machine.
+See [`PROJECT_ROUTER.md`](PROJECT_ROUTER.md) for full routing rules.
 
-For a normal ChatGPT coding session:
-
-1. Start your tunnel.
-2. Run `auvrynt serve`.
-3. Connect the MCP client to your public `/mcp` URL.
-4. Approve the connection with the Owner password.
-5. Ask ChatGPT to open a project inside one of your allowed roots.
+---
 
 ## Platform Support
 
-Auvrynt supports Linux, macOS, and Windows environments with a Bash-compatible
-shell.
+| Platform | Status |
+|---|---|
+| Linux | ✅ Supported |
+| macOS | ✅ Supported |
+| Windows (Git Bash / WSL / MSYS2) | ✅ Supported |
+| Windows PowerShell / cmd.exe only | ❌ Not supported — use Git Bash or WSL |
 
-| Platform                                          | Status            | Notes                                          |
-| ------------------------------------------------- | ----------------- | ---------------------------------------------- |
-| Linux                                             | Supported         | Requires Node, npm, Git, and Bash.             |
-| macOS                                             | Supported         | Requires Node, npm, Git, and Bash.             |
-| Windows with Git Bash, WSL, MSYS2, or Cygwin Bash | Supported         | Git Bash is the simplest native Windows setup. |
-| Windows PowerShell or `cmd.exe` only              | Not supported yet | Install Git Bash or use WSL.                   |
-
-Run this to inspect your local setup:
+**Check your environment:**
 
 ```bash
 auvrynt doctor
 ```
 
+---
+
+## Configuration
+
+Config files are stored in `~/.auvrynt/`:
+
+```
+~/.auvrynt/config.json   ← ports, roots, public URL
+~/.auvrynt/auth.json     ← owner password (keep private)
+```
+
+Key environment variables:
+
+| Variable | Description |
+|---|---|
+| `AUVRYNT_ALLOWED_ROOTS` | Comma-separated project root paths |
+| `AUVRYNT_PUBLIC_BASE_URL` | Your public tunnel origin (no `/mcp`) |
+| `AUVRYNT_OAUTH_OWNER_TOKEN` | Override the owner password directly |
+| `AUVRYNT_LOG_FORMAT` | `json` (default) or `pretty` |
+
+See [Configuration Reference](docs/configuration.md) for all options.
+
+---
+
 ## Documentation
 
-- [Setup Guide](docs/setup.md)
-- [ChatGPT Coding Workflow](docs/chatgpt-coding-workflow.md)
-- [Configuration Reference](docs/configuration.md)
-- [Security Model](docs/security.md)
-- [Troubleshooting Gotchas](docs/gotchas.md)
+| Document | Description |
+|---|---|
+| [Setup Guide](docs/setup.md) | Step-by-step tunnel and client setup |
+| [Configuration Reference](docs/configuration.md) | All env vars and config options |
+| [ChatGPT Coding Workflow](docs/chatgpt-coding-workflow.md) | How to use Auvrynt day-to-day |
+| [Security Model](docs/security.md) | Path isolation, auth, and threat model |
+| [Troubleshooting Gotchas](docs/gotchas.md) | Common issues and fixes |
 
-## Philosophy
-
-Every piece of software is becoming conversational. Natural language is
-redefining how we interact with tools, workflows, and systems.
-
-My bet is that ChatGPT becomes the operating system for everything. Once we
-reach AGI, we will simply talk to ChatGPT, and it will prompt, coordinate, and
-orchestrate sub-agents that set up the right loops for us.
-
-We are not there yet.
-
-Auvrynt is one attempt to fast-forward that future: a way for MCP-capable
-hosts like ChatGPT and Claude to work directly with local project files through
-explicit, inspectable tools.
-
-## Built by Waishnav
-
-I'm Waishnav, the creator of [GitCMS](https://gitcms.dev/), a Git-backed CMS
-for markdown sites.
-
-I like building opinionated products, and Auvrynt is another example of that.
-I'm on a journey to build a single-person company doing multiple millions in
-revenue. If you want to watch the failures, wins, lessons, and everything in
-between, come hang out with me on [X](https://x.com/wshxnv).
+---
 
 ## Local Development
 
-For working on Auvrynt itself:
-
 ```bash
 npm install --include=dev
-npm run dev
 npm run typecheck
 npm test
 npm run build
-npm run start
+npm run dev
 ```
+
+---
+
+## License
+
+MIT — © 2026 [EN-rain](https://github.com/EN-rain)
