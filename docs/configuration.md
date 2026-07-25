@@ -13,17 +13,17 @@ The default files are:
 Use another config directory with:
 
 ```bash
-AUVRYNT_CONFIG_DIR=/path/to/config npx @en-rain/auvrynt serve
+AUVRYNT_CONFIG_DIR=/path/to/config npx auvrynt serve
 ```
 
 ## Commands
 
 ```bash
-npx @en-rain/auvrynt init
-npx @en-rain/auvrynt serve
-npx @en-rain/auvrynt doctor
-npx @en-rain/auvrynt config get
-npx @en-rain/auvrynt config set publicBaseUrl https://auvrynt.example.com
+npx auvrynt init
+npx auvrynt serve
+npx auvrynt doctor
+npx auvrynt config get
+npx auvrynt config set publicBaseUrl https://auvrynt.example.com
 ```
 
 ## Core Environment Variables
@@ -95,7 +95,7 @@ Example:
 
 ```bash
 AUVRYNT_SKILL_PATHS="$HOME/.codex/skills,$HOME/.claude/skills" \
-npx @en-rain/auvrynt serve
+npx auvrynt serve
 ```
 
 ## Logging
@@ -125,7 +125,7 @@ AUVRYNT_WORKTREE_ROOT="$HOME/.auvrynt/worktrees" \
 AUVRYNT_TOOL_MODE="minimal" \
 AUVRYNT_TOOL_NAMING="short" \
 AUVRYNT_WIDGETS="full" \
-npx @en-rain/auvrynt serve
+npx auvrynt serve
 ```
 
 The environment assignments must be part of the same command invocation, or

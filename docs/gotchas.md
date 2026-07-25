@@ -7,8 +7,8 @@ This page collects the setup issues users are most likely to hit.
 Use `npx`:
 
 ```bash
-npx @en-rain/auvrynt init
-npx @en-rain/auvrynt serve
+npx auvrynt init
+npx auvrynt serve
 ```
 
 If you installed globally, confirm npm's global bin directory is on `PATH`.
@@ -40,7 +40,7 @@ npm rebuild better-sqlite3
 Then run:
 
 ```bash
-npx @en-rain/auvrynt doctor
+npx auvrynt doctor
 ```
 
 Release starts run a native dependency check before launching.
@@ -62,7 +62,7 @@ https://your-tunnel-host.example.com/mcp
 If you saved the wrong value:
 
 ```bash
-npx @en-rain/auvrynt config set publicBaseUrl https://your-tunnel-host.example.com
+npx auvrynt config set publicBaseUrl https://your-tunnel-host.example.com
 ```
 
 ## Tunnel URL Changed
@@ -72,13 +72,13 @@ Temporary tunnels often change URLs between runs.
 For a one-off run:
 
 ```bash
-AUVRYNT_PUBLIC_BASE_URL="https://new-tunnel.example.com" npx @en-rain/auvrynt serve
+AUVRYNT_PUBLIC_BASE_URL="https://new-tunnel.example.com" npx auvrynt serve
 ```
 
 For a stable URL:
 
 ```bash
-npx @en-rain/auvrynt config set publicBaseUrl https://auvrynt.example.com
+npx auvrynt config set publicBaseUrl https://auvrynt.example.com
 ```
 
 ## Host Header Or 403 Problems
@@ -88,7 +88,7 @@ Auvrynt derives allowed hosts from the configured public URL.
 Run:
 
 ```bash
-npx @en-rain/auvrynt doctor
+npx auvrynt doctor
 ```
 
 Confirm the public URL hostname appears in allowed hosts. If you changed tunnel
@@ -97,7 +97,7 @@ URLs, update `publicBaseUrl`.
 Use this only for intentional local debugging:
 
 ```bash
-AUVRYNT_ALLOWED_HOSTS="*" npx @en-rain/auvrynt serve
+AUVRYNT_ALLOWED_HOSTS="*" npx auvrynt serve
 ```
 
 ## OAuth Redirect Host Rejected
@@ -113,7 +113,7 @@ localhost
 If another MCP client uses a different redirect host, configure:
 
 ```bash
-AUVRYNT_OAUTH_ALLOWED_REDIRECT_HOSTS="chatgpt.com,example.com" npx @en-rain/auvrynt serve
+AUVRYNT_OAUTH_ALLOWED_REDIRECT_HOSTS="chatgpt.com,example.com" npx auvrynt serve
 ```
 
 ## Owner Password Not Accepted
@@ -127,7 +127,7 @@ Make sure you are entering the Owner password from:
 To regenerate setup:
 
 ```bash
-npx @en-rain/auvrynt init --force
+npx auvrynt init --force
 ```
 
 ## Unknown `workspaceId`
@@ -146,13 +146,13 @@ The path must be inside one of the allowed roots configured during setup.
 Run:
 
 ```bash
-npx @en-rain/auvrynt config get
+npx auvrynt config get
 ```
 
 Then either open a project under an allowed root or rerun setup:
 
 ```bash
-npx @en-rain/auvrynt init --force
+npx auvrynt init --force
 ```
 
 ## Worktree Mode Fails
@@ -180,7 +180,7 @@ Install Git for Windows and use Git Bash, or use WSL, MSYS2, or Cygwin Bash.
 Run:
 
 ```bash
-npx @en-rain/auvrynt doctor
+npx auvrynt doctor
 ```
 
 Confirm Bash is detected.
@@ -190,7 +190,7 @@ Confirm Bash is detected.
 Skills are enabled by default. Check:
 
 ```bash
-AUVRYNT_SKILLS=1 npx @en-rain/auvrynt serve
+AUVRYNT_SKILLS=1 npx auvrynt serve
 ```
 
 Auvrynt looks in:

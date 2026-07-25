@@ -7,14 +7,14 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@en-rain/auvrynt">
-    <img alt="npm" src="https://img.shields.io/npm/v/%40en-rain%2Fauvrynt?style=flat-square&color=cb3837" />
+  <a href="https://www.npmjs.com/package/auvrynt">
+    <img alt="npm" src="https://img.shields.io/npm/v/auvrynt?style=flat-square&color=cb3837" />
   </a>
   <a href="https://github.com/EN-rain/Auvrynt-Web-to-local-Arsenal/actions/workflows/ci.yml">
     <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/EN-rain/Auvrynt-Web-to-local-Arsenal/ci.yml?style=flat-square&branch=main" />
   </a>
   <a href="https://github.com/EN-rain/Auvrynt-Web-to-local-Arsenal/blob/main/LICENSE">
-    <img alt="License" src="https://img.shields.io/npm/l/%40en-rain%2Fauvrynt?style=flat-square" />
+    <img alt="License" src="https://img.shields.io/npm/l/auvrynt?style=flat-square" />
   </a>
   <a href="https://nodejs.org">
     <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D20.12-brightgreen?style=flat-square" />
@@ -47,7 +47,7 @@ Connect once, then ask your AI to:
 **Install globally:**
 
 ```bash
-npm install -g @en-rain/auvrynt
+npm install -g auvrynt
 ```
 
 **Set up and start:**
@@ -60,8 +60,8 @@ auvrynt start
 **Or run directly without installing:**
 
 ```bash
-npx @en-rain/auvrynt init
-npx @en-rain/auvrynt start
+npx auvrynt init
+npx auvrynt start
 ```
 
 During `auvrynt init`, you will be asked for:

@@ -19,7 +19,7 @@ ngrok, Pinggy, Tailscale Funnel, or your own HTTPS reverse proxy.
 Run:
 
 ```bash
-npx @en-rain/auvrynt init
+npx auvrynt init
 ```
 
 The setup flow asks one question at a time.
@@ -79,20 +79,20 @@ https://your-tunnel-host.example.com/mcp
 Run:
 
 ```bash
-npx @en-rain/auvrynt serve
+npx auvrynt serve
 ```
 
 If your tunnel URL changes for one run, override it without rewriting config:
 
 ```bash
-AUVRYNT_PUBLIC_BASE_URL="https://new-tunnel.example.com" npx @en-rain/auvrynt serve
+AUVRYNT_PUBLIC_BASE_URL="https://new-tunnel.example.com" npx auvrynt serve
 ```
 
 For a stable public URL, persist it:
 
 ```bash
-npx @en-rain/auvrynt config set publicBaseUrl https://auvrynt.example.com
-npx @en-rain/auvrynt serve
+npx auvrynt config set publicBaseUrl https://auvrynt.example.com
+npx auvrynt serve
 ```
 
 ## Approve The Client
@@ -114,7 +114,7 @@ Keep `auth.json` private.
 Run:
 
 ```bash
-npx @en-rain/auvrynt doctor
+npx auvrynt doctor
 ```
 
 The doctor command reports the resolved config, Node version, Node ABI, platform,
