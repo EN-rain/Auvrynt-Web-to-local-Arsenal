@@ -7,8 +7,13 @@ Auvrynt extends Model Context Protocol (MCP) with tools for web application deve
 ## Architecture & Security Boundaries
 
 Use `get_connection_status` after `open_workspace` to automatically probe the
-authenticated MCP session, the local Blender bridge, the Godot editor bridge,
-browser support, Chrome MCP registration, and tracked workspace processes. A
+authenticated MCP session, Blender, Godot, Cloudflare Tunnel, Serena, browser
+support, Chrome MCP registration, and tracked workspace processes. Blender
+detection includes the Blender Lab MCP endpoint shown in Blender preferences
+(`localhost:9876` by default) and the Auvrynt bridge (`127.0.0.1:49323`).
+Godot detection distinguishes a running Godot process from a reachable Auvrynt
+editor bridge (`127.0.0.1:49322`). Cloudflare Tunnel and Serena report whether
+their executables are installed and whether their processes are running. A
 browser marked `available` means Playwright is installed; browser sessions are
 created on demand and are not persistent connections.
 
