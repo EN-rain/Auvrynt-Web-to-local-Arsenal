@@ -167,7 +167,7 @@ Auvrynt automatically selects the right workflow guide based on your project typ
 | `project.godot` (any language) | Godot Agent Guide |
 | `.blend` files | Blender Agent Guide |
 
-See [`PROJECT_ROUTER.md`](PROJECT_ROUTER.md) for full routing rules.
+See [`PROJECT_ROUTER.md`](guides/PROJECT_ROUTER.md) for full routing rules.
 
 ---
 
