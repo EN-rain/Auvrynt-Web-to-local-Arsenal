@@ -79,20 +79,20 @@ https://your-tunnel-host.example.com/mcp
 Run:
 
 ```bash
-npx auvrynt serve
+npx auvrynt start
 ```
 
 If your tunnel URL changes for one run, override it without rewriting config:
 
 ```bash
-AUVRYNT_PUBLIC_BASE_URL="https://new-tunnel.example.com" npx auvrynt serve
+AUVRYNT_PUBLIC_BASE_URL="https://new-tunnel.example.com" npx auvrynt start
 ```
 
 For a stable public URL, persist it:
 
 ```bash
 npx auvrynt config set publicBaseUrl https://auvrynt.example.com
-npx auvrynt serve
+npx auvrynt start
 ```
 
 ## Approve The Client

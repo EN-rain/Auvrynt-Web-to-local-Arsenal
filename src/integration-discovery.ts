@@ -1,6 +1,8 @@
+import { existsSync } from "node:fs";
 import { createConnection } from "node:net";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { loadConfig } from "./config.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -66,19 +68,38 @@ function hasProcess(processes: string[], markers: string[]): boolean {
 }
 
 export async function discoverLocalIntegrations(): Promise<LocalIntegrationDiscovery> {
+  let configExecs: Record<string, string | undefined> = {};
+  try {
+    const config = loadConfig();
+    configExecs = config.executables;
+  } catch {}
+
   const blenderMcpPort = Number(process.env.AUVRYNT_BLENDER_MCP_PORT ?? 9876);
-  const [processes, cloudflared, serena, blenderLabMcp, auvryntBlenderBridge, auvryntGodotBridge] = await Promise.all([
+  const [processes, cloudflaredSys, serenaSys, godotSys, blenderSys, blenderLabMcp, auvryntBlenderBridge, auvryntGodotBridge] = await Promise.all([
     runningProcessNames(),
     findExecutable("cloudflared"),
     findExecutable("serena"),
+    findExecutable("godot"),
+    findExecutable("blender"),
     probePort("127.0.0.1", blenderMcpPort),
     probePort("127.0.0.1", 49323),
     probePort("127.0.0.1", 49322),
   ]);
 
+  const serena = configExecs.serena || serenaSys;
+  const godot = configExecs.godot || godotSys;
+  const godotCsharp = configExecs.godotCsharp;
+  const blender = configExecs.blender || blenderSys;
+
   return {
     processes,
-    executables: { cloudflared, serena },
+    executables: {
+      cloudflared: cloudflaredSys,
+      serena,
+      godot,
+      godotCsharp,
+      blender,
+    },
     ports: {
       blender_lab_mcp: blenderLabMcp,
       auvrynt_blender_bridge: auvryntBlenderBridge,

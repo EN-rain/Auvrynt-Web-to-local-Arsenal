@@ -84,9 +84,20 @@ assert.throws(
 );
 
 assert.equal(loadConfig(baseEnv).oauth.ownerToken, "test-owner-token-that-is-long-enough");
-assert.deepEqual(loadConfig(baseEnv).oauth.scopes, ["auvrynt"]);
+assert.deepEqual(loadConfig(baseEnv).oauth.scopes, [
+  "auvrynt:read",
+  "auvrynt:write",
+  "auvrynt:process",
+  "auvrynt:web",
+  "auvrynt:software",
+  "auvrynt:godot",
+  "auvrynt:blender",
+  "auvrynt:serena",
+]);
 assert.deepEqual(loadConfig(baseEnv).oauth.allowedRedirectHosts, [
   "chatgpt.com",
+  "claude.ai",
+  "claude.com",
   "localhost",
   "127.0.0.1",
 ]);
@@ -94,8 +105,8 @@ assert.equal(loadConfig(baseEnv).oauth.accessTokenTtlSeconds, 3600);
 assert.equal(loadConfig(baseEnv).oauth.refreshTokenTtlSeconds, 2592000);
 
 assert.deepEqual(
-  loadConfig({ ...baseEnv, AUVRYNT_OAUTH_SCOPES: "auvrynt,admin" }).oauth.scopes,
-  ["auvrynt", "admin"],
+  loadConfig({ ...baseEnv, AUVRYNT_OAUTH_SCOPES: "auvrynt:read,admin" }).oauth.scopes,
+  ["auvrynt:read", "admin"],
 );
 assert.deepEqual(
   loadConfig({ ...baseEnv, AUVRYNT_OAUTH_ALLOWED_REDIRECT_HOSTS: "chatgpt.com,example.com" }).oauth

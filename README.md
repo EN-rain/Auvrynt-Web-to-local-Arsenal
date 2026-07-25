@@ -124,7 +124,7 @@ Keep it private.
 | Command | Description |
 |---|---|
 | `auvrynt init` | Run first-time setup or update your config |
-| `auvrynt start` | Start the server with clean animated output |
+| `auvrynt start` | Start a Cloudflare tunnel scoped to the current directory |
 | `auvrynt serve` | Start the server with verbose log output |
 | `auvrynt doctor` | Show your config, Node version, and dependency health |
 | `auvrynt status` | Show local MCP, Blender, Godot, Cloudflare Tunnel, and Serena status |

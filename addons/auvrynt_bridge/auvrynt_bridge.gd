@@ -1,4 +1,4 @@
-@tool
+    Recreate or edit the Claude connector after restart.@tool
 extends EditorPlugin
 
 # ─── Configuration ────────────────────────────────────────────────────────────

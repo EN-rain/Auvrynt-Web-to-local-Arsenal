@@ -9,6 +9,14 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { expandHomePath } from "./roots.js";
 
+export interface AuvryntExecutablesConfig {
+  serena?: string;
+  godot?: string;
+  godotCsharp?: string;
+  blender?: string;
+  [key: string]: string | undefined;
+}
+
 export interface AuvryntUserConfig {
   host?: string;
   port?: number;
@@ -18,6 +26,7 @@ export interface AuvryntUserConfig {
   stateDir?: string;
   worktreeRoot?: string;
   agentDir?: string;
+  executables?: AuvryntExecutablesConfig;
 }
 
 export interface AuvryntAuthConfig {

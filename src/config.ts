@@ -3,12 +3,34 @@ import { join, resolve } from "node:path";
 import { expandHomePath } from "./roots.js";
 import type { LoggingConfig, LogFormat, LogLevel } from "./logger.js";
 import type { OAuthConfig } from "./oauth-provider.js";
-import { loadAuvryntFiles, type AuvryntUserConfig } from "./user-config.js";
+import { loadAuvryntFiles, type AuvryntUserConfig, type AuvryntExecutablesConfig } from "./user-config.js";
 
 export type ToolNamingMode = "legacy" | "short";
 export type WidgetMode = "off" | "changes" | "full";
 const DEFAULT_OAUTH_ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
 const DEFAULT_OAUTH_REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+export const SUPPORTED_SCOPES = [
+  "auvrynt:read",
+  "auvrynt:write",
+  "auvrynt:process",
+  "auvrynt:web",
+  "auvrynt:software",
+  "auvrynt:godot",
+  "auvrynt:blender",
+  "auvrynt:serena",
+] as const;
+
+export const SCOPE_DESCRIPTIONS: Record<string, string> = {
+  "auvrynt:read": "Inspect files, search, and perform read-only project analysis",
+  "auvrynt:write": "Edit and create files",
+  "auvrynt:process": "Start and stop approved workspace processes",
+  "auvrynt:web": "Use browser and web-development tools",
+  "auvrynt:software": "Use software and .NET tools",
+  "auvrynt:godot": "Use Godot project tools",
+  "auvrynt:blender": "Use Blender 3D tools",
+  "auvrynt:serena": "Use local Serena semantic code tools",
+};
 
 export interface SerenaServerConfig {
   enabled: boolean;
@@ -38,6 +60,7 @@ export interface ServerConfig {
   agentDir: string;
   logging: LoggingConfig;
   serena: SerenaServerConfig;
+  executables: AuvryntExecutablesConfig;
 }
 
 function parsePort(value: string | number | undefined): number {
@@ -195,9 +218,11 @@ function parseOAuthConfig(env: NodeJS.ProcessEnv, ownerToken: string | undefined
       DEFAULT_OAUTH_REFRESH_TOKEN_TTL_SECONDS,
       "AUVRYNT_OAUTH_REFRESH_TOKEN_TTL_SECONDS",
     ),
-    scopes: parseStringList(env.AUVRYNT_OAUTH_SCOPES, ["auvrynt"]),
+    scopes: parseStringList(env.AUVRYNT_OAUTH_SCOPES, [...SUPPORTED_SCOPES]),
     allowedRedirectHosts: parseStringList(env.AUVRYNT_OAUTH_ALLOWED_REDIRECT_HOSTS, [
       "chatgpt.com",
+      "claude.ai",
+      "claude.com",
       "localhost",
       "127.0.0.1",
     ]),
@@ -220,7 +245,7 @@ function parseSerenaConfig(env: NodeJS.ProcessEnv, filesConfig: AuvryntUserConfi
   const filesSerena = (filesConfig as any).serena ?? {};
   return {
     enabled: parseBoolean(env.AUVRYNT_SERENA_ENABLED ?? filesSerena.enabled),
-    executable: env.AUVRYNT_SERENA_EXECUTABLE ?? filesSerena.executable ?? "serena",
+    executable: env.AUVRYNT_SERENA_EXECUTABLE ?? env.AUVRYNT_SERENA_PATH ?? filesConfig.executables?.serena ?? filesSerena.executable ?? "serena",
     backend: (env.AUVRYNT_SERENA_BACKEND ?? filesSerena.backend ?? "LSP") as "LSP" | "JetBrains",
     context: env.AUVRYNT_SERENA_CONTEXT ?? filesSerena.context ?? "desktop-app",
     startupTimeoutMs: parsePositiveInteger(
@@ -235,6 +260,16 @@ function parseSerenaConfig(env: NodeJS.ProcessEnv, filesConfig: AuvryntUserConfi
     maxInstances: parsePositiveInteger(
       env.AUVRYNT_SERENA_MAX_INSTANCES ?? filesSerena.maxInstances, 3, "AUVRYNT_SERENA_MAX_INSTANCES",
     ),
+  };
+}
+
+function parseExecutablesConfig(env: NodeJS.ProcessEnv, filesConfig: AuvryntUserConfig): AuvryntExecutablesConfig {
+  const configExecs = filesConfig.executables ?? {};
+  return {
+    serena: env.AUVRYNT_SERENA_PATH ?? configExecs.serena,
+    godot: env.AUVRYNT_GODOT_PATH ?? configExecs.godot,
+    godotCsharp: env.AUVRYNT_GODOT_CSHARP_PATH ?? configExecs.godotCsharp,
+    blender: env.AUVRYNT_BLENDER_PATH ?? configExecs.blender,
   };
 }
 
@@ -271,6 +306,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     agentDir: resolve(expandHomePath(env.AUVRYNT_AGENT_DIR ?? files.config.agentDir ?? defaultAgentDir())),
     logging: parseLoggingConfig(env),
     serena: parseSerenaConfig(env, files.config),
+    executables: parseExecutablesConfig(env, files.config),
   };
 }
 

@@ -3095,9 +3095,10 @@ export function createServer(config = loadConfig()): RunningServer {
   const mcpUrl = new URL("/mcp", config.publicBaseUrl);
   const resourceServerUrl = resourceUrlFromServerUrl(mcpUrl);
   const oauthProvider = new SingleUserOAuthProvider(config.oauth, mcpUrl);
+  const minimumScope = config.oauth.scopes.includes("auvrynt:read") ? "auvrynt:read" : config.oauth.scopes[0];
   const bearerAuth = requireBearerAuth({
     verifier: oauthProvider,
-    requiredScopes: [config.oauth.scopes[0] ?? "auvrynt"],
+    requiredScopes: [minimumScope],
     resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(resourceServerUrl),
   });
   const workspaceStore = createWorkspaceStore(config.stateDir);

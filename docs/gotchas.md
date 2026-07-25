@@ -8,7 +8,7 @@ Use `npx`:
 
 ```bash
 npx auvrynt init
-npx auvrynt serve
+npx auvrynt start
 ```
 
 If you installed globally, confirm npm's global bin directory is on `PATH`.
@@ -72,7 +72,7 @@ Temporary tunnels often change URLs between runs.
 For a one-off run:
 
 ```bash
-AUVRYNT_PUBLIC_BASE_URL="https://new-tunnel.example.com" npx auvrynt serve
+AUVRYNT_PUBLIC_BASE_URL="https://new-tunnel.example.com" npx auvrynt start
 ```
 
 For a stable URL:
@@ -97,7 +97,7 @@ URLs, update `publicBaseUrl`.
 Use this only for intentional local debugging:
 
 ```bash
-AUVRYNT_ALLOWED_HOSTS="*" npx auvrynt serve
+AUVRYNT_ALLOWED_HOSTS="*" npx auvrynt start
 ```
 
 ## OAuth Redirect Host Rejected
@@ -113,7 +113,7 @@ localhost
 If another MCP client uses a different redirect host, configure:
 
 ```bash
-AUVRYNT_OAUTH_ALLOWED_REDIRECT_HOSTS="chatgpt.com,example.com" npx auvrynt serve
+AUVRYNT_OAUTH_ALLOWED_REDIRECT_HOSTS="chatgpt.com,example.com" npx auvrynt start
 ```
 
 ## Owner Password Not Accepted
@@ -190,7 +190,7 @@ Confirm Bash is detected.
 Skills are enabled by default. Check:
 
 ```bash
-AUVRYNT_SKILLS=1 npx auvrynt serve
+AUVRYNT_SKILLS=1 npx auvrynt start
 ```
 
 Auvrynt looks in:
