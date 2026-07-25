@@ -87,7 +87,7 @@ async function main(argv: string[]): Promise<void> {
       runConfigCommand(args);
       return;
     case "setup":
-      await runSetup();
+      await runSetup(args.slice(1));
       return;
     case "help":
       printHelp();
@@ -675,21 +675,47 @@ const SETUP_TOOL_LABELS: Record<string, string> = {
 const SETUP_TOOL_KEYS = ["serena", "godot", "godotCsharp", "blender"] as const;
 type SetupToolKey = (typeof SETUP_TOOL_KEYS)[number];
 
-async function runSetup(): Promise<void> {
-  prompts.intro("  Auvrynt Setup - configure local tool integrations  ");
-
+async function runSetup(args: string[] = []): Promise<void> {
   const files = loadAuvryntFiles();
   const existingExecs: Record<string, string | undefined> = files.config.executables ?? {};
 
-  // 1. Pick which tools to configure
-  const picked = await prompts.multiselect<SetupToolKey>({
-    message: "Select tools to configure  (arrows navigate, space select, enter confirm)",
-    options: SETUP_TOOL_KEYS.map((key) => ({
-      value: key,
-      label: SETUP_TOOL_LABELS[key],
-      hint: existingExecs[key] ? `currently: ${existingExecs[key]}` : undefined,
-    })),
-    required: false,
+  // Direct CLI argument support: auvrynt setup <tool> <path>
+  if (args.length >= 2) {
+    const targetTool = args[0].toLowerCase();
+    const toolKeyMap: Record<string, SetupToolKey> = {
+      serena: "serena",
+      godot: "godot",
+      godotcsharp: "godotCsharp",
+      "godot-csharp": "godotCsharp",
+      blender: "blender",
+    };
+    const key = toolKeyMap[targetTool];
+    if (key) {
+      const exePath = args.slice(1).join(" ").trim();
+      const updatedExecs = { ...existingExecs, [key]: exePath };
+      writeAuvryntConfig({ ...files.config, executables: updatedExecs });
+      console.log(`Updated ${key} executable path: ${exePath}`);
+      return;
+    }
+  }
+
+  prompts.intro("  Auvrynt Setup - configure local tool integrations  ");
+
+  // 1. Pick which tool(s) to configure using single-select (defaults to "all")
+  const picked = await prompts.select({
+    message: "Select integration to configure  (Enter to confirm)",
+    options: [
+      {
+        value: "all",
+        label: "All integrations (Serena, Godot, Godot C#, Blender)",
+        hint: "Configure executable paths for all tools",
+      },
+      ...SETUP_TOOL_KEYS.map((key) => ({
+        value: key,
+        label: SETUP_TOOL_LABELS[key],
+        hint: existingExecs[key] ? `currently: ${existingExecs[key]}` : "not set",
+      })),
+    ],
   });
 
   if (prompts.isCancel(picked)) {
@@ -697,17 +723,14 @@ async function runSetup(): Promise<void> {
     return;
   }
 
-  const selection = (picked as unknown) as SetupToolKey[];
-  if (selection.length === 0) {
-    prompts.outro("Nothing selected - no changes made.");
-    return;
-  }
+  const selection: SetupToolKey[] =
+    picked === "all" ? [...SETUP_TOOL_KEYS] : [picked as SetupToolKey];
 
   // 2. Prompt for executable path for each selected tool
   const updated: Record<string, string | undefined> = { ...existingExecs };
 
   for (const key of selection) {
-    const label = SETUP_TOOL_LABELS[key].split(" - ")[0].trim();
+    const labelName = SETUP_TOOL_LABELS[key].split(" - ")[0].trim();
 
     let placeholder: string;
     switch (key) {
@@ -728,7 +751,7 @@ async function runSetup(): Promise<void> {
     }
 
     const answer = await prompts.text({
-      message: ` executable path`,
+      message: `${labelName} executable path`,
       placeholder,
       initialValue: existingExecs[key] ?? "",
       validate: (val) => {
@@ -759,7 +782,7 @@ async function runSetup(): Promise<void> {
   // 4. Show summary
   prompts.note(
     selection
-      .map((key) => ` -> `)
+      .map((key) => `${SETUP_TOOL_LABELS[key].split(" - ")[0].trim().padEnd(14)} -> ${updated[key]}`)
       .join("\n"),
     "Saved to ~/.auvrynt/config.json",
   );
