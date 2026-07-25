@@ -260,23 +260,46 @@ async function serve(): Promise<void> {
   const godotPlugin = ensureGlobalGodotPlugin();
   const godotIsSetup = Boolean(config.executables.godot || config.executables.godotCsharp);
 
+  // Probe integration ports before starting the server
+  const integrationStatus = await discoverLocalIntegrations();
+
+  function integrationLine(label: string, reachable: boolean, configured?: boolean): string {
+    const padded = label.padEnd(20);
+    if (reachable) {
+      return `  \x1b[90m${padded}\x1b[0m  \x1b[32m200 OK\x1b[0m`;
+    } else if (configured) {
+      return `  \x1b[90m${padded}\x1b[0m  \x1b[33moffline\x1b[0m`;
+    }
+    return `  \x1b[90m${padded}\x1b[0m  \x1b[90mnot configured\x1b[0m`;
+  }
+
   await new Promise<void>((resolveServer, rejectServer) => {
     const httpServer = app.listen(config.port, config.host, () => {
     if (startMode) {
       console.clear();
       console.log("");
       console.log("  \x1b[36m\x1b[1mAuvrynt: Webkit Arsenal is ready\x1b[0m");
-      if (godotIsSetup || godotPlugin.installed) {
-        console.log("  \x1b[32m\x1b[1mGodot OK\x1b[0m (Global Auvrynt Bridge plugin installed)");
-      }
+      console.log("");
+
+      // Integration status rows
+      const godotBridgeUp = integrationStatus.ports.auvrynt_godot_bridge;
+      const blenderBridgeUp = integrationStatus.ports.auvrynt_blender_bridge || integrationStatus.ports.blender_lab_mcp;
+      const godotConfigured = godotIsSetup || godotPlugin.installed;
+      const godotCsharpConfigured = Boolean(config.executables.godotCsharp);
+      const blenderConfigured = Boolean(integrationStatus.executables.blender);
+      const serenaConfigured = Boolean(integrationStatus.executables.serena) || processDetected(integrationStatus, "serena");
+      const serenaRunning = processDetected(integrationStatus, "serena");
+      console.log(integrationLine("Godot GDScript:", godotBridgeUp, godotConfigured));
+      console.log(integrationLine("Godot C#:", godotBridgeUp, godotCsharpConfigured));
+      console.log(integrationLine("Blender:", blenderBridgeUp, blenderConfigured));
+      console.log(integrationLine("Serena:", serenaRunning, serenaConfigured));
+      console.log(integrationLine("Playwright:", integrationStatus.ports.playwright ?? false, false));
       console.log("");
 
       console.log("  \x1b[90mWeb Agent connector URL:\x1b[0m");
       console.log("    \x1b[36m" + publicMcpUrl + "\x1b[0m");
-      console.log("");
       console.log("  \x1b[90mAuthorization page:\x1b[0m");
       console.log("    \x1b[36m" + config.publicBaseUrl.replace(/\/$/, "") + "/authorize\x1b[0m");
-      console.log("");
       console.log("  \x1b[90mOwner token:\x1b[0m");
       console.log("    \x1b[33m" + ownerToken + "\x1b[0m");
       console.log("");
