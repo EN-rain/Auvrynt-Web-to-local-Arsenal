@@ -257,13 +257,20 @@ async function serve(): Promise<void> {
     ? `${config.publicBaseUrl.replace(/\/$/, "")}/mcp`
     : `http://${config.host}:${config.port}/mcp`;
 
+  const godotPlugin = ensureGlobalGodotPlugin();
+  const godotIsSetup = Boolean(config.executables.godot || config.executables.godotCsharp);
+
   await new Promise<void>((resolveServer, rejectServer) => {
     const httpServer = app.listen(config.port, config.host, () => {
     if (startMode) {
       console.clear();
       console.log("");
       console.log("  \x1b[36m\x1b[1mAuvrynt: Webkit Arsenal is ready\x1b[0m");
+      if (godotIsSetup || godotPlugin.installed) {
+        console.log("  \x1b[32m\x1b[1mGodot OK\x1b[0m (Global Auvrynt Bridge plugin installed)");
+      }
       console.log("");
+
       console.log("  \x1b[90mWeb Agent connector URL:\x1b[0m");
       console.log("    \x1b[36m" + publicMcpUrl + "\x1b[0m");
       console.log("");
@@ -564,12 +571,24 @@ async function runStatus(): Promise<void> {
   }
 
   const local = await discoverLocalIntegrations();
+  const godotPlugin = ensureGlobalGodotPlugin();
+  const godotConfigured = Boolean(local.executables.godot || local.executables.godotCsharp || godotPlugin.installed);
+  const godotRunning = processDetected(local, "godot");
+  const godotStatusText = local.ports.auvrynt_godot_bridge
+    ? "OK (Auvrynt bridge connected)"
+    : godotRunning
+    ? "OK (running)"
+    : godotConfigured
+    ? "OK"
+    : "not detected";
+
   console.log(`Blender MCP (9876): ${local.ports.blender_lab_mcp ? "connected" : processDetected(local, "blender") ? "running, MCP unavailable" : "not detected"}`);
-  console.log(`Godot: ${local.ports.auvrynt_godot_bridge ? "Auvrynt bridge connected" : processDetected(local, "godot") ? "running, bridge unavailable" : "not detected"}`);
+  console.log(`Godot: ${godotStatusText}`);
   if (local.executables.godotCsharp) console.log(`Godot C#: configured`);
   console.log(`Cloudflare Tunnel: ${processDetected(local, "cloudflare_tunnel") ? "running" : local.executables.cloudflared ? "installed, not running" : "not installed"}`);
   console.log(`Serena: ${processDetected(local, "serena") ? "running" : local.executables.serena ? "installed" : "not installed"}`);
 }
+
 
 
 function stateDirForFiles(files: ReturnType<typeof loadAuvryntFiles>): string {
