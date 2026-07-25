@@ -666,13 +666,12 @@ function printHelp(): void {
 // ─── auvrynt setup ────────────────────────────────────────────────────────────
 
 const SETUP_TOOL_LABELS: Record<string, string> = {
-  serena:      "Serena       - semantic code search / code intelligence",
   godot:       "Godot        - GDScript game engine",
   godotCsharp: "Godot C#     - .NET / Mono Godot build",
   blender:     "Blender      - 3D modelling and rendering",
 };
 
-const SETUP_TOOL_KEYS = ["serena", "godot", "godotCsharp", "blender"] as const;
+const SETUP_TOOL_KEYS = ["godot", "godotCsharp", "blender"] as const;
 type SetupToolKey = (typeof SETUP_TOOL_KEYS)[number];
 
 async function runSetup(args: string[] = []): Promise<void> {
@@ -683,7 +682,6 @@ async function runSetup(args: string[] = []): Promise<void> {
   if (args.length >= 2) {
     const targetTool = args[0].toLowerCase();
     const toolKeyMap: Record<string, SetupToolKey> = {
-      serena: "serena",
       godot: "godot",
       godotcsharp: "godotCsharp",
       "godot-csharp": "godotCsharp",
@@ -707,7 +705,7 @@ async function runSetup(args: string[] = []): Promise<void> {
     options: [
       {
         value: "all",
-        label: "All integrations (Serena, Godot, Godot C#, Blender)",
+        label: "All integrations (Godot, Godot C#, Blender)",
         hint: "Configure executable paths for all tools",
       },
       ...SETUP_TOOL_KEYS.map((key) => ({
@@ -734,9 +732,6 @@ async function runSetup(args: string[] = []): Promise<void> {
 
     let placeholder: string;
     switch (key) {
-      case "serena":
-        placeholder = "e.g. C:\\tools\\serena.exe  or just  serena  if on PATH";
-        break;
       case "godot":
         placeholder = "e.g. C:\\Program Files\\Godot\\Godot.exe";
         break;
@@ -772,7 +767,7 @@ async function runSetup(args: string[] = []): Promise<void> {
   writeAuvryntConfig({
     ...files.config,
     executables: {
-      serena:      updated.serena,
+      ...files.config.executables,
       godot:       updated.godot,
       godotCsharp: updated.godotCsharp,
       blender:     updated.blender,
@@ -789,6 +784,7 @@ async function runSetup(args: string[] = []): Promise<void> {
 
   prompts.outro("Setup complete. Run `auvrynt status` to verify.");
 }
+
 
 function normalizeOptionalPublicBaseUrl(value: string): string | null {
   const trimmed = value.trim();
