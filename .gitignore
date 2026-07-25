@@ -1,0 +1,64 @@
+# Build outputs
+node_modules/
+dist/
+releases/
+*.tsbuildinfo
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+
+# OS and editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/settings.json
+*.suo
+*.user
+
+# Test and coverage outputs
+coverage/
+.nyc_output/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.swp
+*.swo
+
+# Auvrynt local state and checkpoints
+.auvrynt/
+auvrynt-state/
+*.checkpoint
+checkpoints/
+
+# Browser profiles and automation
+.playwright-browsers/
+playwright-report/
+test-results/
+
+# Blender render outputs (local only)
+renders/
+*.exr
+*.hdr
+
+# Generated assets (large local binaries)
+*.blend1
+*.blend2
+
+# Godot local editor state
+.godot/
+*.import
