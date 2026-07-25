@@ -76,10 +76,10 @@ Identify the active subproject from the user request. Read only that subproject'
 
 Example layout:
 ```
-apps/web/          → WEB_DEV.md + WEB_AGENT_GUIDE.md
-games/rpg/         → GODOT_DEV.md (contains project.godot)
-services/api/      → SOFTWARE_DEV.md
-assets/characters/ → BLENDER_DEV.md (.blend files)
+apps/web/          → WEB_AGENT_GUIDE.md
+games/rpg/         → GODOT_AGENT_GUIDE.md (contains project.godot)
+services/api/      → SOFTWARE_AGENT_GUIDE.md
+assets/characters/ → BLENDER_AGENT_GUIDE.md (.blend files)
 ```
 
 ### Rule 6 — Unclear
