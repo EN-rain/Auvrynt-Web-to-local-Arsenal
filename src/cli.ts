@@ -20,6 +20,8 @@ import {
 import { expandHomePath } from "./roots.js";
 import { discoverLocalIntegrations, processDetected } from "./integration-discovery.js";
 import { readConnectedClients } from "./connection-registry.js";
+import { ensureGlobalGodotPlugin } from "./godot-tools.js";
+
 
 type Command = "serve" | "init" | "doctor" | "status" | "connected" | "uninstall" | "config" | "setup" | "help";
 const require = createRequire(import.meta.url);
@@ -762,6 +764,12 @@ async function runSetup(args: string[] = []): Promise<void> {
     },
   });
 
+  // Automatically install global Godot Editor plugin
+  const pluginResult = ensureGlobalGodotPlugin();
+  if (pluginResult.installed) {
+    prompts.log.success(`Installed global Godot Editor plugin: ${pluginResult.targetPath}`);
+  }
+
   // 4. Show summary
   prompts.note(
     selection
@@ -772,6 +780,7 @@ async function runSetup(args: string[] = []): Promise<void> {
 
   prompts.outro("Setup complete. Run `auvrynt status` to verify.");
 }
+
 
 
 

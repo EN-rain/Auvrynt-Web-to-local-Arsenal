@@ -1,9 +1,13 @@
 import { readFile, readdir, stat } from "node:fs/promises";
+import { cpSync, existsSync, mkdirSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { dirname, join, relative } from "node:path";
+import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 import type { WorkspaceRegistry } from "./workspaces.js";
 import type { ProcessManager } from "./processes.js";
+
 
 const execFileAsync = promisify(execFile);
 
@@ -289,3 +293,37 @@ export async function inspectGodotScene(
     signals: parsed.signals,
   };
 }
+
+export function ensureGlobalGodotPlugin(): { installed: boolean; targetPath: string } {
+  let targetDir: string;
+  if (process.platform === "win32") {
+    const appData = process.env.APPDATA || join(homedir(), "AppData", "Roaming");
+    targetDir = join(appData, "Godot", "editor_plugins", "auvrynt_bridge");
+  } else if (process.platform === "darwin") {
+    targetDir = join(homedir(), "Library", "Application Support", "Godot", "editor_plugins", "auvrynt_bridge");
+  } else {
+    targetDir = join(homedir(), ".config", "godot", "editor_plugins", "auvrynt_bridge");
+  }
+
+  const candidateSourceDirs: string[] = [];
+  try {
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = dirname(__filename);
+    candidateSourceDirs.push(join(__dirname, "..", "addons", "auvrynt_bridge"));
+  } catch {}
+  candidateSourceDirs.push(join(process.cwd(), "addons", "auvrynt_bridge"));
+
+  const sourceDir = candidateSourceDirs.find((d) => existsSync(d));
+  if (!sourceDir) {
+    return { installed: false, targetPath: targetDir };
+  }
+
+  try {
+    mkdirSync(targetDir, { recursive: true });
+    cpSync(sourceDir, targetDir, { recursive: true, force: true });
+    return { installed: true, targetPath: targetDir };
+  } catch {
+    return { installed: false, targetPath: targetDir };
+  }
+}
+
