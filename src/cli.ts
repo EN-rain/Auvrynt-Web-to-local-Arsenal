@@ -668,10 +668,9 @@ function printHelp(): void {
 const SETUP_TOOL_LABELS: Record<string, string> = {
   godot:       "Godot        - GDScript game engine",
   godotCsharp: "Godot C#     - .NET / Mono Godot build",
-  blender:     "Blender      - 3D modelling and rendering",
 };
 
-const SETUP_TOOL_KEYS = ["godot", "godotCsharp", "blender"] as const;
+const SETUP_TOOL_KEYS = ["godot", "godotCsharp"] as const;
 type SetupToolKey = (typeof SETUP_TOOL_KEYS)[number];
 
 async function runSetup(args: string[] = []): Promise<void> {
@@ -685,7 +684,6 @@ async function runSetup(args: string[] = []): Promise<void> {
       godot: "godot",
       godotcsharp: "godotCsharp",
       "godot-csharp": "godotCsharp",
-      blender: "blender",
     };
     const key = toolKeyMap[targetTool];
     if (key) {
@@ -699,21 +697,14 @@ async function runSetup(args: string[] = []): Promise<void> {
 
   prompts.intro("  Auvrynt Setup - configure local tool integrations  ");
 
-  // 1. Pick which tool(s) to configure using single-select (defaults to "all")
+  // 1. Pick which tool to configure using single-select
   const picked = await prompts.select({
     message: "Select integration to configure  (Enter to confirm)",
-    options: [
-      {
-        value: "all",
-        label: "All integrations (Godot, Godot C#, Blender)",
-        hint: "Configure executable paths for all tools",
-      },
-      ...SETUP_TOOL_KEYS.map((key) => ({
-        value: key,
-        label: SETUP_TOOL_LABELS[key],
-        hint: existingExecs[key] ? `currently: ${existingExecs[key]}` : "not set",
-      })),
-    ],
+    options: SETUP_TOOL_KEYS.map((key) => ({
+      value: key,
+      label: SETUP_TOOL_LABELS[key],
+      hint: existingExecs[key] ? `currently: ${existingExecs[key]}` : "not set",
+    })),
   });
 
   if (prompts.isCancel(picked)) {
@@ -721,10 +712,9 @@ async function runSetup(args: string[] = []): Promise<void> {
     return;
   }
 
-  const selection: SetupToolKey[] =
-    picked === "all" ? [...SETUP_TOOL_KEYS] : [picked as SetupToolKey];
+  const selection: SetupToolKey[] = [picked as SetupToolKey];
 
-  // 2. Prompt for executable path for each selected tool
+  // 2. Prompt for executable path for selected tool
   const updated: Record<string, string | undefined> = { ...existingExecs };
 
   for (const key of selection) {
@@ -737,9 +727,6 @@ async function runSetup(args: string[] = []): Promise<void> {
         break;
       case "godotCsharp":
         placeholder = "e.g. C:\\Program Files\\Godot_v4-mono\\Godot.exe  (.NET build)";
-        break;
-      case "blender":
-        placeholder = "e.g. C:\\Program Files\\Blender Foundation\\Blender 4.3\\blender.exe";
         break;
       default:
         placeholder = "";
@@ -770,7 +757,6 @@ async function runSetup(args: string[] = []): Promise<void> {
       ...files.config.executables,
       godot:       updated.godot,
       godotCsharp: updated.godotCsharp,
-      blender:     updated.blender,
     },
   });
 
@@ -784,6 +770,7 @@ async function runSetup(args: string[] = []): Promise<void> {
 
   prompts.outro("Setup complete. Run `auvrynt status` to verify.");
 }
+
 
 
 function normalizeOptionalPublicBaseUrl(value: string): string | null {
