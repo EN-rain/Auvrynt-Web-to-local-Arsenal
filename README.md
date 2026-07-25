@@ -178,12 +178,7 @@ See [`PROJECT_ROUTER.md`](guides/PROJECT_ROUTER.md) for full routing rules.
 
 ## Platform Support
 
-| Platform | Status |
-|---|---|
-| Linux | ✅ Supported |
-| macOS | ✅ Supported |
-| Windows (Git Bash / WSL / MSYS2) | ✅ Supported |
-| Windows PowerShell / cmd.exe only | ❌ Not supported — use Git Bash or WSL |
+**Windows only. Tested on Windows PowerShell and cmd.exe.**
 
 **Check your environment:**
 
