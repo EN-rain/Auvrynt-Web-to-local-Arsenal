@@ -40,6 +40,24 @@ Load this guide when `.blend` files or `bpy` python scripts are present, or when
 
 ---
 
+## Serena (Semantic Code)
+
+Serena is relevant only to Blender Python/add-on source.
+
+**Use Serena for:**
+- `bpy` scripts
+- Addon modules
+- Operator classes, panel classes
+- Python symbol references
+
+**Do not use Serena for:**
+- Blender objects, meshes, materials, UVs, rigs, animations, renders
+- Live scene state
+
+Use the Blender integration (`blender_ping`, `blender_get_scene_info`, etc.) for live Blender operations. Serena handles source code navigation only.
+
+---
+
 ## Security Restrictions
 - All file paths (opening, saving, exporting) must resolve inside the approved Auvrynt workspace.
 - Unrestricted Python execution (`blender_execute_python`) requires explicit user approval and is blocked from accessing system calls (`os.system`, `subprocess`), network ports, or secrets.

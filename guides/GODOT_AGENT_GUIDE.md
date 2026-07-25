@@ -266,6 +266,28 @@ The editor bridge enables live scene-tree inspection and node mutation from Auvr
 
 ---
 
+## Serena (Semantic Code)
+
+Serena provides language-aware symbol navigation for Godot C# and GDScript source files.
+
+**Use Serena for:**
+- C# or GDScript source navigation when supported reliably
+- References and symbol structure
+- Code-level refactoring
+
+**Do not use Serena for:**
+- Scene tree, Inspector, resources, animations, TileMap, collision
+- Remote runtime tree, game input, screenshots, exports
+
+**Use:**
+- Godot editor bridge → scenes/resources/runtime
+- Serena → semantic source navigation (`serena_find_symbol`, `serena_find_referencing_symbols`, etc.)
+- Godot/.NET diagnostics → build/parser truth (`godot_dotnet_build`, `godot_get_gdscript_diagnostics`)
+
+Do not replace Godot's GDScript LSP integration with Serena unless tests prove equivalent behavior.
+
+---
+
 ## Troubleshooting
 
 ### `GODOT_DOTNET_EXECUTABLE not set`

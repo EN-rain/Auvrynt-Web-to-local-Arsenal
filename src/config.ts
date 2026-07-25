@@ -3,12 +3,23 @@ import { join, resolve } from "node:path";
 import { expandHomePath } from "./roots.js";
 import type { LoggingConfig, LogFormat, LogLevel } from "./logger.js";
 import type { OAuthConfig } from "./oauth-provider.js";
-import { loadAuvryntFiles } from "./user-config.js";
+import { loadAuvryntFiles, type AuvryntUserConfig } from "./user-config.js";
 
 export type ToolNamingMode = "legacy" | "short";
 export type WidgetMode = "off" | "changes" | "full";
 const DEFAULT_OAUTH_ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
 const DEFAULT_OAUTH_REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+export interface SerenaServerConfig {
+  enabled: boolean;
+  executable: string;
+  backend: "LSP" | "JetBrains";
+  context: string;
+  startupTimeoutMs: number;
+  requestTimeoutMs: number;
+  idleTimeoutMinutes: number;
+  maxInstances: number;
+}
 
 export interface ServerConfig {
   host: string;
@@ -26,6 +37,7 @@ export interface ServerConfig {
   skillPaths: string[];
   agentDir: string;
   logging: LoggingConfig;
+  serena: SerenaServerConfig;
 }
 
 function parsePort(value: string | number | undefined): number {
@@ -204,6 +216,28 @@ function defaultAgentDir(): string {
   return join(homedir(), ".codex");
 }
 
+function parseSerenaConfig(env: NodeJS.ProcessEnv, filesConfig: AuvryntUserConfig): SerenaServerConfig {
+  const filesSerena = (filesConfig as any).serena ?? {};
+  return {
+    enabled: parseBoolean(env.AUVRYNT_SERENA_ENABLED ?? filesSerena.enabled),
+    executable: env.AUVRYNT_SERENA_EXECUTABLE ?? filesSerena.executable ?? "serena",
+    backend: (env.AUVRYNT_SERENA_BACKEND ?? filesSerena.backend ?? "LSP") as "LSP" | "JetBrains",
+    context: env.AUVRYNT_SERENA_CONTEXT ?? filesSerena.context ?? "desktop-app",
+    startupTimeoutMs: parsePositiveInteger(
+      env.AUVRYNT_SERENA_STARTUP_TIMEOUT ?? filesSerena.startupTimeoutMs, 30_000, "AUVRYNT_SERENA_STARTUP_TIMEOUT",
+    ),
+    requestTimeoutMs: parsePositiveInteger(
+      env.AUVRYNT_SERENA_REQUEST_TIMEOUT ?? filesSerena.requestTimeoutMs, 60_000, "AUVRYNT_SERENA_REQUEST_TIMEOUT",
+    ),
+    idleTimeoutMinutes: parsePositiveInteger(
+      env.AUVRYNT_SERENA_IDLE_TIMEOUT ?? filesSerena.idleTimeoutMinutes, 30, "AUVRYNT_SERENA_IDLE_TIMEOUT",
+    ),
+    maxInstances: parsePositiveInteger(
+      env.AUVRYNT_SERENA_MAX_INSTANCES ?? filesSerena.maxInstances, 3, "AUVRYNT_SERENA_MAX_INSTANCES",
+    ),
+  };
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const files = loadAuvryntFiles(env);
   const host = env.HOST ?? files.config.host ?? "127.0.0.1";
@@ -236,6 +270,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     skillPaths: parsePathList(env.AUVRYNT_SKILL_PATHS),
     agentDir: resolve(expandHomePath(env.AUVRYNT_AGENT_DIR ?? files.config.agentDir ?? defaultAgentDir())),
     logging: parseLoggingConfig(env),
+    serena: parseSerenaConfig(env, files.config),
   };
 }
 

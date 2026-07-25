@@ -28,6 +28,22 @@ Do not use web browser/screenshot tools unless the application exposes a web API
 - `dotnet_format`
 - `get_csharp_diagnostics`
 
+**Serena Semantic Tools** (when Serena is enabled)
+- `serena_start_session` — start a Serena session for the workspace
+- `serena_find_symbol` — locate a symbol by name
+- `serena_find_referencing_symbols` — find all references to a symbol
+- `serena_get_symbols_overview` — overview of symbols in a file
+- `serena_search_for_pattern` — language-aware pattern search
+- `serena_find_implementations` — find implementations
+- `serena_find_declaration` — find declaration
+- `serena_get_diagnostics_for_file` — LSP diagnostics for a file
+- `serena_get_diagnostics_for_symbol` — diagnostics for a symbol
+- `serena_replace_symbol_body` — replace symbol body (controlled mutation)
+- `serena_insert_before_symbol` — insert code before a symbol
+- `serena_insert_after_symbol` — insert code after a symbol
+- `serena_rename_symbol` — rename symbol across the project
+- `serena_safe_delete_symbol` — delete symbol with safety checks
+
 **Process management**
 - start process (for persistent background services or long-running APIs)
 - get process logs
@@ -68,3 +84,21 @@ Do not use web browser/screenshot tools unless the application exposes a web API
 - [ ] Code formatting verified with linter or `dotnet_format`.
 - [ ] Process starts, listens on designated ports (if API), and logs are clean of exceptions.
 - [ ] Code compiles cleanly on target frameworks.
+
+---
+
+## Serena Routing
+
+Use Serena for semantic navigation when the backend supports the language.
+
+- Use Roslyn/Auvrynt .NET tools for authoritative C# diagnostics.
+- Avoid duplicate semantic edits from Serena and Roslyn in the same step.
+- Choose one semantic mutation owner per operation.
+- Refresh both services after edits when both are active.
+
+For C#:
+- Compiler/build truth → .NET tools (`dotnet_build`, `inspect_dotnet_project`)
+- Semantic navigation → Serena (`serena_find_symbol`, `serena_find_referencing_symbols`, etc.)
+- Debugger → DAP
+
+Do not claim Serena alone proves a C# build succeeds. Always run `dotnet_build` to verify.

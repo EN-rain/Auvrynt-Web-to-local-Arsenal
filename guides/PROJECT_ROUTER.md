@@ -116,6 +116,35 @@ Inspect only the smallest useful set of root files. State which guide was select
 | Godot project + `.blend` source asset task | GODOT_AGENT_GUIDE.md primary, BLENDER_AGENT_GUIDE.md secondary |
 | Web project + `.blend` source asset task | WEB_AGENT_GUIDE.md primary, BLENDER_AGENT_GUIDE.md secondary |
 
+## Serena (Semantic Code Engine)
+
+Serena is a local semantic code analysis engine accessible through Auvrynt. It provides symbol-aware navigation and editing across supported languages.
+
+**Use Serena when:**
+- Locating symbols in a large codebase
+- Understanding class/function/component structure
+- Finding definitions and references
+- Tracing cross-file dependencies
+- Performing symbol-aware insertion or replacement
+- Safely renaming symbols
+- Navigating monorepos
+- Inspecting unfamiliar architecture
+
+**Do not use Serena for:**
+- Simple exact text replacement (use Auvrynt edit tools)
+- Reading a small known file (use Auvrynt read tools)
+- Starting servers, process logs, browser DOM, console errors, network requests, screenshots, visual comparison, image inspection
+- Godot scene-tree operations or Blender scene/object operations
+- Git commands
+
+**Routing:**
+- Need semantic code structure? → Start a Serena session with `serena_start_session`, then use `serena_find_symbol`, `serena_find_referencing_symbols`, etc.
+- Need ordinary file/config inspection? → Auvrynt workspace tools
+- Need runtime behavior? → Auvrynt process/browser/Godot/Blender tools
+- Need visual evidence? → Auvrynt screenshot/image tools
+
+To enable Serena, set `AUVRYNT_SERENA_ENABLED=true` or add `"serena": { "enabled": true }` to Auvrynt config.
+
 ---
 
 ## Nested Instruction Files

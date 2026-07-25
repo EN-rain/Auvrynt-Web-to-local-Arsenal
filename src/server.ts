@@ -170,6 +170,8 @@ import {
   blenderSaveFileAs,
   blenderExportGlb,
 } from "./blender-tools.js";
+import { SerenaManager, defaultSerenaConfig } from "./serena-manager.js";
+import { registerSerenaTools } from "./serena-tools.js";
 
 type Transport = StreamableHTTPServerTransport;
 const WORKSPACE_APP_URI = "ui://auvrynt/workspace-app.html";
@@ -609,6 +611,7 @@ function createMcpServer(
   config: ServerConfig,
   workspaces: WorkspaceRegistry,
   reviewCheckpoints: ReturnType<typeof createReviewCheckpointManager>,
+  serenaManager: SerenaManager,
 ): McpServer {
   const processManager = new ProcessManager(workspaces);
   const toolNames = toolNamesFor(config);
@@ -3065,6 +3068,8 @@ function createMcpServer(
     ...toolWidgetDescriptorMeta(config, "write"), annotations: MUTATING_ANNOTATIONS,
   }, async (input) => blenderExportGlb(workspaces, input));
 
+  registerSerenaTools(server, config, serenaManager, workspaces);
+
   return server;
 }
 
@@ -3088,6 +3093,17 @@ export function createServer(config = loadConfig()): RunningServer {
   const workspaceStore = createWorkspaceStore(config.stateDir);
   const workspaces = new WorkspaceRegistry(config, workspaceStore);
   const reviewCheckpoints = createReviewCheckpointManager();
+  const serenaConfig = {
+    enabled: config.serena.enabled,
+    executable: config.serena.executable,
+    backend: config.serena.backend,
+    context: config.serena.context,
+    startupTimeoutMs: config.serena.startupTimeoutMs,
+    requestTimeoutMs: config.serena.requestTimeoutMs,
+    idleTimeoutMinutes: config.serena.idleTimeoutMinutes,
+    maxInstances: config.serena.maxInstances,
+  };
+  const serenaManager = new SerenaManager(serenaConfig);
 
   if (config.logging.trustProxy) {
     app.set("trust proxy", true);
@@ -3211,7 +3227,7 @@ export function createServer(config = loadConfig()): RunningServer {
           }
         };
 
-        const server = createMcpServer(config, workspaces, reviewCheckpoints);
+        const server = createMcpServer(config, workspaces, reviewCheckpoints, serenaManager);
         await server.connect(transport);
       } else {
         sendJsonRpcError(res, 400, -32000, "No valid MCP session");

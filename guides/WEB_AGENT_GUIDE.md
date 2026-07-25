@@ -190,6 +190,32 @@ Never make stronger claims than the evidence supports.
 
 ---
 
+## Serena (Semantic Code)
+
+Serena provides language-aware symbol navigation for web projects. Start a session and use it selectively.
+
+**Good uses:**
+- Find a React component by symbol
+- Find all references to a hook
+- Inspect a TypeScript class
+- Trace a route handler
+- Rename an exported function
+- Insert code into a known symbol
+- Understand frontend/backend dependencies
+
+**Bad uses:**
+- Pixel comparison, CSS visual verification, browser interaction
+- Console inspection, failed-request inspection
+- Package-manager detection, dev-server startup
+
+**Workflow:**
+1. Start session: `serena_start_session({ workspaceId })`
+2. Use semantic tools: `serena_find_symbol`, `serena_find_referencing_symbols`, `serena_get_symbols_overview`, etc.
+3. Edit with Auvrynt edit tools or Serena mutation tools (`serena_replace_symbol_body`, etc.)
+4. Run server and verify in browser
+
+Serena does not replace browser verification.
+
 ## Do Not Include
 
 - Godot editor bridge calls
