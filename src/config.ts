@@ -263,15 +263,22 @@ function parseSerenaConfig(env: NodeJS.ProcessEnv, filesConfig: AuvryntUserConfi
   };
 }
 
+function cleanExecutablePath(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim().replace(/^["']|["']$/g, "").trim();
+  return trimmed || undefined;
+}
+
 function parseExecutablesConfig(env: NodeJS.ProcessEnv, filesConfig: AuvryntUserConfig): AuvryntExecutablesConfig {
   const configExecs = filesConfig.executables ?? {};
   return {
-    serena: env.AUVRYNT_SERENA_PATH ?? configExecs.serena,
-    godot: env.AUVRYNT_GODOT_PATH ?? configExecs.godot,
-    godotCsharp: env.AUVRYNT_GODOT_CSHARP_PATH ?? configExecs.godotCsharp,
-    blender: env.AUVRYNT_BLENDER_PATH ?? configExecs.blender,
+    serena: cleanExecutablePath(env.AUVRYNT_SERENA_PATH ?? configExecs.serena),
+    godot: cleanExecutablePath(env.AUVRYNT_GODOT_PATH ?? configExecs.godot),
+    godotCsharp: cleanExecutablePath(env.AUVRYNT_GODOT_CSHARP_PATH ?? configExecs.godotCsharp),
+    blender: cleanExecutablePath(env.AUVRYNT_BLENDER_PATH ?? configExecs.blender),
   };
 }
+
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const files = loadAuvryntFiles(env);

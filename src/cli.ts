@@ -687,7 +687,7 @@ async function runSetup(args: string[] = []): Promise<void> {
     };
     const key = toolKeyMap[targetTool];
     if (key) {
-      const exePath = args.slice(1).join(" ").trim();
+      const exePath = args.slice(1).join(" ").trim().replace(/^["']|["']$/g, "").trim();
       const updatedExecs = { ...existingExecs, [key]: exePath };
       writeAuvryntConfig({ ...files.config, executables: updatedExecs });
       console.log(`Updated ${key} executable path: ${exePath}`);
@@ -747,8 +747,9 @@ async function runSetup(args: string[] = []): Promise<void> {
       return;
     }
 
-    updated[key] = (answer as string).trim();
+    updated[key] = (answer as string).trim().replace(/^["']|["']$/g, "").trim();
   }
+
 
   // 3. Persist to ~/.auvrynt/config.json
   writeAuvryntConfig({
