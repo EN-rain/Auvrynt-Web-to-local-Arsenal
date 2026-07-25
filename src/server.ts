@@ -42,6 +42,7 @@ import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
 import { executeViewImage } from "./view-image.js";
 import { ProcessManager } from "./processes.js";
 import { getConnectionStatus } from "./connection-status.js";
+import { recordConnectedClient } from "./connection-registry.js";
 import { globFiles, searchText, inspectProject } from "./search-discovery.js";
 import { validateWebUrl, capturePageScreenshot, inspectPage, startDevServer } from "./web-tools.js";
 import { inspectImage, compareImages, inspectSprite, splitSpriteSheet } from "./image-tools.js";
@@ -419,6 +420,15 @@ function requestLogFields(req: Request, config: ServerConfig): Record<string, un
     referer: req.header("referer"),
     contentLength: req.header("content-length"),
   };
+}
+
+function mcpClientName(req: Request): string | undefined {
+  const headerName = req.header("x-mcp-client-name") ?? req.header("x-client-name");
+  if (headerName) return headerName;
+
+  const body = req.body as { params?: { clientInfo?: { name?: unknown } } } | undefined;
+  const name = body?.params?.clientInfo?.name;
+  return typeof name === "string" ? name : undefined;
 }
 
 function logToolCall(config: ServerConfig, fields: ToolLogFields): void {
@@ -3185,6 +3195,18 @@ export function createServer(config = loadConfig()): RunningServer {
       });
       sendJsonRpcError(res, 401, -32001, "Unauthorized");
       return;
+    }
+
+    try {
+      recordConnectedClient(config.stateDir, {
+        clientName: mcpClientName(req),
+        userAgent: req.header("user-agent") ?? undefined,
+      });
+    } catch (error) {
+      logEvent(config.logging, "warn", "connection_registry_write_failed", {
+        requestId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
 
     logEvent(config.logging, "debug", "mcp_request", {

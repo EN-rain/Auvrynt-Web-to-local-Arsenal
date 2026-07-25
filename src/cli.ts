@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import { createRequire } from "node:module";
 import { stdin as input, stdout as output } from "node:process";
-import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { rmSync } from "node:fs";
+import { join, resolve } from "node:path";
 import * as prompts from "@clack/prompts";
 import { getShellConfig } from "@earendil-works/pi-coding-agent";
 import { satisfies } from "semver";
@@ -14,8 +16,10 @@ import {
   type AuvryntUserConfig,
 } from "./user-config.js";
 import { expandHomePath } from "./roots.js";
+import { discoverLocalIntegrations, processDetected } from "./integration-discovery.js";
+import { readConnectedClients } from "./connection-registry.js";
 
-type Command = "serve" | "init" | "doctor" | "config" | "help";
+type Command = "serve" | "init" | "doctor" | "status" | "connected" | "uninstall" | "config" | "help";
 const require = createRequire(import.meta.url);
 const SUPPORTED_NODE_RANGE = ">=20.12 <27";
 
@@ -39,6 +43,15 @@ async function main(argv: string[]): Promise<void> {
     case "doctor":
       await runDoctor();
       return;
+    case "status":
+      await runStatus();
+      return;
+    case "connected":
+      runConnected();
+      return;
+    case "uninstall":
+      await runUninstall(args.includes("--yes"));
+      return;
     case "config":
       runConfigCommand(args);
       return;
@@ -51,6 +64,7 @@ async function main(argv: string[]): Promise<void> {
 function normalizeCommand(command: string | undefined): Command {
   if (!command || command === "serve" || command === "start") return "serve";
   if (command === "init" || command === "doctor" || command === "config") return command;
+  if (command === "status" || command === "connected" || command === "uninstall") return command;
   if (command === "help" || command === "--help" || command === "-h") return "help";
   throw new Error(`Unknown command: ${command}`);
 }
@@ -264,6 +278,71 @@ async function runDoctor(): Promise<void> {
   }
 }
 
+async function runStatus(): Promise<void> {
+  const files = loadAuvryntFiles();
+  const host = files.config.host ?? "127.0.0.1";
+  const port = files.config.port ?? 49321;
+  const healthUrl = `http://${host}:${port}/healthz`;
+
+  try {
+    const response = await fetch(healthUrl, { signal: AbortSignal.timeout(1500) });
+    const body = await response.json().catch(() => ({})) as { ok?: boolean; name?: string };
+    console.log(`Local MCP: ${response.ok && body.ok ? "connected" : "error"}`);
+    console.log(`Health URL: ${healthUrl}`);
+  } catch (error) {
+    console.log("Local MCP: disconnected");
+    console.log(`Health URL: ${healthUrl}`);
+    console.log(`Detail: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  const local = await discoverLocalIntegrations();
+  console.log(`Blender MCP (9876): ${local.ports.blender_lab_mcp ? "connected" : processDetected(local, "blender") ? "running, MCP unavailable" : "not detected"}`);
+  console.log(`Godot: ${local.ports.auvrynt_godot_bridge ? "Auvrynt bridge connected" : processDetected(local, "godot") ? "running, bridge unavailable" : "not detected"}`);
+  console.log(`Cloudflare Tunnel: ${processDetected(local, "cloudflare_tunnel") ? "running" : local.executables.cloudflared ? "installed, not running" : "not installed"}`);
+  console.log(`Serena: ${processDetected(local, "serena") ? "running" : local.executables.serena ? "installed, on demand" : "not installed"}`);
+}
+
+function stateDirForFiles(files: ReturnType<typeof loadAuvryntFiles>): string {
+  return resolve(expandHomePath(files.config.stateDir ?? join(homedir(), ".local", "share", "auvrynt")));
+}
+
+function runConnected(): void {
+  const clients = readConnectedClients(stateDirForFiles(loadAuvryntFiles()));
+  console.log("Connected web agents:");
+  if (clients.length === 0) {
+    console.log("  none recorded yet");
+    return;
+  }
+
+  for (const client of clients) {
+    console.log(`  ${client.provider} — ${client.requestCount} request(s), last seen ${client.lastSeen}`);
+    if (client.userAgent) console.log(`    user-agent: ${client.userAgent}`);
+  }
+}
+
+async function runUninstall(skipConfirmation: boolean): Promise<void> {
+  const files = loadAuvryntFiles();
+  if (!skipConfirmation) {
+    if (!input.isTTY || !output.isTTY) {
+      throw new Error("Uninstall is destructive in a non-interactive terminal. Re-run with `auvrynt uninstall --yes`.");
+    }
+    const answer = await prompts.confirm({ message: `Remove Auvrynt configuration from ${files.dir}?`, initialValue: false });
+    if (prompts.isCancel(answer) || !answer) {
+      console.log("Uninstall cancelled.");
+      return;
+    }
+  }
+
+  if (files.configExists || files.authExists) {
+    rmSync(files.dir, { recursive: true, force: true });
+    console.log(`Removed Auvrynt configuration: ${files.dir}`);
+  } else {
+    console.log("Auvrynt configuration was already absent.");
+  }
+  console.log("The npm CLI package remains installed. Remove it with: npm uninstall -g auvrynt");
+  console.log("Custom state/worktree directories were preserved.");
+}
+
 function runConfigCommand(args: string[]): void {
   const [subcommand, key, ...rest] = args;
   const files = loadAuvryntFiles();
@@ -303,6 +382,9 @@ function printHelp(): void {
       "  auvrynt serve           Start the server with verbose console logs",
       "  auvrynt init            Create or update ~/.auvrynt/config.json and auth.json",
       "  auvrynt doctor          Show config, runtime, and native dependency status",
+      "  auvrynt status          Show local MCP and integration connection status",
+      "  auvrynt connected       Show recently connected MCP/web-agent providers",
+      "  auvrynt uninstall       Remove Auvrynt configuration (use --yes for automation)",
       "  auvrynt config get      Print persisted config",
       "  auvrynt config set publicBaseUrl <url|null>",
       "",

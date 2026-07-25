@@ -127,6 +127,10 @@ Keep it private.
 | `auvrynt start` | Start the server with clean animated output |
 | `auvrynt serve` | Start the server with verbose log output |
 | `auvrynt doctor` | Show your config, Node version, and dependency health |
+| `auvrynt status` | Show local MCP, Blender, Godot, Cloudflare Tunnel, and Serena status |
+| `auvrynt connected` | Show recently observed ChatGPT, Kimi, Claude, or other MCP providers |
+| `auvrynt uninstall` | Remove Auvrynt configuration after confirmation |
+| `auvrynt help` | Print the complete command reference |
 | `auvrynt config get` | Print your saved configuration |
 | `auvrynt config set publicBaseUrl <url>` | Update your public tunnel URL |
 
