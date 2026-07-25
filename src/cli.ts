@@ -262,7 +262,7 @@ async function serve(): Promise<void> {
       console.log("");
       console.log("  \x1b[36m\x1b[1mAuvrynt: Webkit Arsenal is ready\x1b[0m");
       console.log("");
-      console.log("  \x1b[90mClaude Web connector URL:\x1b[0m");
+      console.log("  \x1b[90mWeb Agent connector URL:\x1b[0m");
       console.log("    \x1b[36m" + publicMcpUrl + "\x1b[0m");
       console.log("");
       console.log("  \x1b[90mAuthorization page:\x1b[0m");
