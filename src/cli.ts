@@ -451,7 +451,7 @@ async function resolveCloudflaredExecutable(): Promise<string> {
     return execFileSync(
       process.platform === "win32" ? "where.exe" : "which",
       ["cloudflared"],
-      { encoding: "utf8" },
+      { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] },
     ).split(/\r?\n/)[0]?.trim() || "cloudflared";
   } catch {
     if (process.platform === "win32") {
@@ -468,7 +468,7 @@ function findCommand(command: string): string | undefined {
     return execFileSync(
       process.platform === "win32" ? "where.exe" : "which",
       [command],
-      { encoding: "utf8" },
+      { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] },
     ).split(/\r?\n/)[0]?.trim() || undefined;
   } catch {
     return undefined;
