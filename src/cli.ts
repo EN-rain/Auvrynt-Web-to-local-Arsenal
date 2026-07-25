@@ -50,7 +50,7 @@ async function main(argv: string[]): Promise<void> {
       runConnected();
       return;
     case "uninstall":
-      await runUninstall(args.includes("--yes"));
+      await runUninstall(args.includes("--yes") || args.includes("-y"));
       return;
     case "config":
       runConfigCommand(args);
@@ -384,7 +384,8 @@ function printHelp(): void {
       "  auvrynt doctor          Show config, runtime, and native dependency status",
       "  auvrynt status          Show local MCP and integration connection status",
       "  auvrynt connected       Show recently connected MCP/web-agent providers",
-      "  auvrynt uninstall       Remove Auvrynt configuration (use --yes for automation)",
+      "  auvrynt uninstall       Remove Auvrynt configuration after confirmation",
+      "  auvrynt uninstall -y    Remove Auvrynt configuration without confirmation",
       "  auvrynt config get      Print persisted config",
       "  auvrynt config set publicBaseUrl <url|null>",
       "",

@@ -130,6 +130,7 @@ Keep it private.
 | `auvrynt status` | Show local MCP, Blender, Godot, Cloudflare Tunnel, and Serena status |
 | `auvrynt connected` | Show recently observed ChatGPT, Kimi, Claude, or other MCP providers |
 | `auvrynt uninstall` | Remove Auvrynt configuration after confirmation |
+| `auvrynt uninstall -y` | Remove Auvrynt configuration without confirmation |
 | `auvrynt help` | Print the complete command reference |
 | `auvrynt config get` | Print your saved configuration |
 | `auvrynt config set publicBaseUrl <url>` | Update your public tunnel URL |
