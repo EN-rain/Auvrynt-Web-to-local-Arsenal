@@ -53,15 +53,35 @@ async function runningProcessNames(): Promise<string[]> {
   }
 }
 
+import { join } from "node:path";
+import { homedir } from "node:os";
+
 async function findExecutable(command: string): Promise<string | undefined> {
-  if (process.platform !== "win32") return undefined;
+  const exes = process.platform === "win32" ? [`${command}.exe`, command] : [command];
+  const userBinDirs = [
+    join(homedir(), ".auvrynt", "bin"),
+    join(homedir(), ".local", "bin"),
+    join(homedir(), "AppData", "Roaming", "Python", "Scripts"),
+  ];
+
+  for (const dir of userBinDirs) {
+    for (const exe of exes) {
+      const fullPath = join(dir, exe);
+      if (existsSync(fullPath)) {
+        return fullPath;
+      }
+    }
+  }
+
   try {
-    const { stdout } = await execFileAsync("where.exe", [command], { timeout: 5_000 });
+    const cmd = process.platform === "win32" ? "where.exe" : "which";
+    const { stdout } = await execFileAsync(cmd, [command], { timeout: 5_000 });
     return stdout.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
   } catch {
     return undefined;
   }
 }
+
 
 function hasProcess(processes: string[], markers: string[]): boolean {
   return processes.some((processName) => markers.some((marker) => processName === marker || processName.includes(marker)));

@@ -562,12 +562,13 @@ async function runStatus(): Promise<void> {
   }
 
   const local = await discoverLocalIntegrations();
-  console.log(`Blender MCP (9876): ${local.ports.blender_lab_mcp ? "connected" : processDetected(local, "blender") ? "running, MCP unavailable" : "not detected"}${local.executables.blender ? ` (${local.executables.blender})` : ""}`);
-  console.log(`Godot: ${local.ports.auvrynt_godot_bridge ? "Auvrynt bridge connected" : processDetected(local, "godot") ? "running, bridge unavailable" : "not detected"}${local.executables.godot ? ` (${local.executables.godot})` : ""}`);
-  if (local.executables.godotCsharp) console.log(`Godot C#: configured (${local.executables.godotCsharp})`);
+  console.log(`Blender MCP (9876): ${local.ports.blender_lab_mcp ? "connected" : processDetected(local, "blender") ? "running, MCP unavailable" : "not detected"}`);
+  console.log(`Godot: ${local.ports.auvrynt_godot_bridge ? "Auvrynt bridge connected" : processDetected(local, "godot") ? "running, bridge unavailable" : "not detected"}`);
+  if (local.executables.godotCsharp) console.log(`Godot C#: configured`);
   console.log(`Cloudflare Tunnel: ${processDetected(local, "cloudflare_tunnel") ? "running" : local.executables.cloudflared ? "installed, not running" : "not installed"}`);
-  console.log(`Serena: ${processDetected(local, "serena") ? "running" : local.executables.serena ? `installed (${local.executables.serena})` : "not installed"}`);
+  console.log(`Serena: ${processDetected(local, "serena") ? "running" : local.executables.serena ? "installed" : "not installed"}`);
 }
+
 
 function stateDirForFiles(files: ReturnType<typeof loadAuvryntFiles>): string {
   return resolve(expandHomePath(files.config.stateDir ?? join(homedir(), ".local", "share", "auvrynt")));
