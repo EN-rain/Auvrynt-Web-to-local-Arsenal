@@ -140,7 +140,7 @@ AUVRYNT_PUBLIC_BASE_URL=https://new-tunnel.example.com auvrynt start
 
 ## What Your AI Can Do
 
-Once connected and a workspace is opened, your AI assistant has access to **137 tools** across:
+Once connected and a workspace is opened, your AI assistant has access to **139 tools** across:
 
 | Category | Capabilities |
 |---|---|

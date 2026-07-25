@@ -6,6 +6,12 @@ Auvrynt extends Model Context Protocol (MCP) with tools for web application deve
 
 ## Architecture & Security Boundaries
 
+Use `get_connection_status` after `open_workspace` to automatically probe the
+authenticated MCP session, the local Blender bridge, the Godot editor bridge,
+browser support, Chrome MCP registration, and tracked workspace processes. A
+browser marked `available` means Playwright is installed; browser sessions are
+created on demand and are not persistent connections.
+
 1. **Workspace Boundary Enforcement**: Every path input must be relative to the opened workspace root. Path traversal (`..`) or symbolic links escaping the workspace are blocked by `WorkspaceRegistry.resolvePath`.
 2. **Persistent Processes**: Long-running servers, .NET applications, and Godot games run as background child processes managed by `ProcessManager`. Standard output and error streams are captured in bounded in-memory log buffers (max 1000 lines).
 3. **Secret Redaction**: Environment variables containing keywords like `TOKEN`, `SECRET`, `PASSWORD`, `KEY`, or `CONNECTION_STRING` are automatically redacted in responses and log entries.

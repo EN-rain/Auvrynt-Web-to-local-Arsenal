@@ -41,6 +41,7 @@ import { createWorkspaceStore } from "./workspace-store.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
 import { executeViewImage } from "./view-image.js";
 import { ProcessManager } from "./processes.js";
+import { getConnectionStatus } from "./connection-status.js";
 import { globFiles, searchText, inspectProject } from "./search-discovery.js";
 import { validateWebUrl, capturePageScreenshot, inspectPage, startDevServer } from "./web-tools.js";
 import { inspectImage, compareImages, inspectSprite, splitSpriteSheet } from "./image-tools.js";
@@ -1461,6 +1462,27 @@ function createMcpServer(
 
   // --- Process Management Tools ---
   const WORKSPACE_ID_SCHEMA = z.string().describe("Workspace identifier returned by open_workspace.");
+
+  registerAppTool(
+    server,
+    "get_connection_status",
+    {
+      title: "Connection status",
+      description: "Automatically check which local integrations are connected for this workspace: MCP, Blender, Godot, browser support, Chrome MCP availability, and tracked processes.",
+      inputSchema: { workspaceId: WORKSPACE_ID_SCHEMA },
+      ...toolWidgetDescriptorMeta(config, "read"),
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async ({ workspaceId }) => {
+      try {
+        const result = await getConnectionStatus(workspaces, processManager, workspaceId);
+        return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { content: [{ type: "text" as const, text: `get_connection_status failed: ${message}` }], isError: true };
+      }
+    },
+  );
 
   registerAppTool(
     server,
