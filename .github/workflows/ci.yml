@@ -18,22 +18,15 @@ concurrency:
 
 jobs:
   smoke:
-    name: Smoke (${{ matrix.os }} / Node ${{ matrix.node }})
-    runs-on: ${{ matrix.os }}
+    name: Windows / Node ${{ matrix.node }}
+    runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            node: "20.12"
-          - os: ubuntu-latest
-            node: "22"
-          - os: ubuntu-latest
-            node: "26"
-          - os: macos-latest
-            node: "22"
-          - os: windows-latest
-            node: "22"
+          - node: "20.12"
+          - node: "22"
+          - node: "26"
 
     env:
       AUVRYNT_ALLOWED_ROOTS: ${{ github.workspace }}

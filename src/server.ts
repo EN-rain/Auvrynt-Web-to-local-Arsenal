@@ -214,6 +214,10 @@ const SHELL_TOOL_ANNOTATIONS = {
 export interface RunningServer {
   app: ReturnType<typeof createMcpExpressApp>;
   config: ServerConfig;
+  updateIntegrations(
+    integrations: ServerConfig["integrations"],
+    options?: { serenaExecutable?: string },
+  ): Promise<{ updated: boolean; activeRequests: number; activeToolCalls: number; closedSessions: number }>;
   close(): Promise<void>;
 }
 
@@ -3280,6 +3284,18 @@ export function createServer(config = loadConfig()): RunningServer {
     maxInstances: config.serena.maxInstances,
   };
   const serenaManager = new SerenaManager(serenaConfig);
+  let activeMcpRequests = 0;
+  let activeToolCalls = 0;
+  let reconfiguring = false;
+
+  const closeMcpSessions = async (): Promise<number> => {
+    const servers = Array.from(new Set(mcpServers.values()));
+    mcpServers.clear();
+    transports.clear();
+    sessionOwners.clear();
+    await Promise.allSettled(servers.map((server) => server.close()));
+    return servers.length;
+  };
 
   // Auvrynt is commonly exposed through a local reverse proxy/tunnel (for example Cloudflare).
   // Only loopback proxies are trusted. Never switch this to boolean `true`: that would let a
@@ -3352,6 +3368,19 @@ export function createServer(config = loadConfig()): RunningServer {
     const requestId = res.locals.requestId as string | undefined;
     const sessionId = req.header("mcp-session-id");
     const initializeRequest = req.method === "POST" && isInitializeRequest(req.body);
+    if (reconfiguring) {
+      sendJsonRpcError(res, 503, -32000, "Auvrynt integrations are being refreshed; reconnect and retry.");
+      return;
+    }
+    activeMcpRequests++;
+    let requestReleased = false;
+    const releaseRequest = () => {
+      if (requestReleased) return;
+      requestReleased = true;
+      activeMcpRequests--;
+    };
+    res.once("finish", releaseRequest);
+    res.once("close", releaseRequest);
 
     await new Promise<void>((resolve, reject) => {
       bearerAuth(req, res, (error?: unknown) => {
@@ -3414,6 +3443,12 @@ export function createServer(config = loadConfig()): RunningServer {
         return;
       }
     }
+
+    const containsToolCall = toolCalls.some((message) => {
+      if (!message || typeof message !== "object") return false;
+      return (message as { method?: unknown }).method === "tools/call";
+    });
+    if (containsToolCall) activeToolCalls++;
 
     try {
       recordConnectedClient(config.stateDir, {
@@ -3500,6 +3535,8 @@ export function createServer(config = loadConfig()): RunningServer {
       if (!res.headersSent) {
         sendJsonRpcError(res, 500, -32603, "Internal server error");
       }
+    } finally {
+      if (containsToolCall) activeToolCalls--;
     }
   });
 
@@ -3521,16 +3558,33 @@ export function createServer(config = loadConfig()): RunningServer {
   return {
     app,
     config,
+    async updateIntegrations(integrations, options): Promise<{ updated: boolean; activeRequests: number; activeToolCalls: number; closedSessions: number }> {
+      if (activeMcpRequests > 0 || activeToolCalls > 0 || reconfiguring) {
+        return { updated: false, activeRequests: activeMcpRequests, activeToolCalls, closedSessions: 0 };
+      }
+
+      reconfiguring = true;
+      try {
+        Object.assign(config.integrations, integrations);
+        if (options?.serenaExecutable) config.serena.executable = options.serenaExecutable;
+        config.serena.enabled = integrations.serena;
+        serenaManager.updateConfig({
+          ...serenaManager.getConfig(),
+          enabled: integrations.serena,
+          executable: options?.serenaExecutable ?? config.serena.executable,
+        });
+        const closedSessions = await closeMcpSessions();
+        return { updated: true, activeRequests: 0, activeToolCalls: 0, closedSessions };
+      } finally {
+        reconfiguring = false;
+      }
+    },
     async close(): Promise<void> {
       if (closed) return;
       closed = true;
 
-      const servers = Array.from(new Set(mcpServers.values()));
-      mcpServers.clear();
-      transports.clear();
-      sessionOwners.clear();
+      await closeMcpSessions();
       await Promise.allSettled([
-        ...servers.map((server) => server.close()),
         serenaManager.stopAllSessions(),
         processManager.stopAllProcesses(),
       ]);

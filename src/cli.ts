@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createRequire } from "node:module";
 import { stdin as input, stdout as output } from "node:process";
 import { homedir } from "node:os";
-import { existsSync, rmSync } from "node:fs";
-import { chmod, cp, mkdir, open, readFile, unlink, writeFile, type FileHandle } from "node:fs/promises";
+import { closeSync, existsSync, openSync, rmSync } from "node:fs";
+import { chmod, cp, mkdir, open, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
@@ -25,9 +25,26 @@ import { discoverLocalIntegrations, processDetected } from "./integration-discov
 import { readConnectedClients } from "./connection-registry.js";
 import { ensureGlobalGodotPlugin, getGlobalGodotPluginStatus } from "./godot-tools.js";
 import { ensurePlaywrightRuntime, getPlaywrightRuntimeStatus } from "./playwright-runtime.js";
+import {
+  INTEGRATION_KEYS,
+  INTEGRATION_LABELS,
+  acquireManagementLock,
+  atomicWriteJson,
+  getProcessIdentity,
+  isProcessRunning,
+  parseIntegrationProfiles,
+  parseStartRequest,
+  processIdentityMatches,
+  readJsonFile,
+  rotateLogFile,
+  type InstanceLockRecord,
+  type IntegrationKey,
+  type ManagedTunnelRecord,
+  type StartRequest,
+} from "./background-lifecycle.js";
 
 
-type Command = "serve" | "init" | "doctor" | "status" | "connected" | "token" | "uninstall" | "config" | "setup" | "enable" | "disable" | "help";
+type Command = "serve" | "init" | "doctor" | "status" | "connected" | "token" | "uninstall" | "config" | "setup" | "enable" | "disable" | "add" | "stop" | "help";
 const require = createRequire(import.meta.url);
 const SUPPORTED_NODE_RANGE = ">=20.12 <27";
 const MANAGED_SERENA_PACKAGE = "serena-agent==1.6.0";
@@ -42,15 +59,6 @@ function httpUrl(host: string, port: number, path = ""): string {
 function localProbeHost(host: string): string {
   return host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
 }
-const INTEGRATION_KEYS = ["godotGdscript", "godotCsharp", "blender", "serena", "playwright"] as const;
-type IntegrationKey = (typeof INTEGRATION_KEYS)[number];
-const INTEGRATION_LABELS: Record<IntegrationKey, string> = {
-  godotGdscript: "Godot GDScript",
-  godotCsharp: "Godot C#",
-  blender: "Blender",
-  serena: "Serena",
-  playwright: "Playwright",
-};
 
 async function main(argv: string[]): Promise<void> {
   assertSupportedNode();
@@ -60,6 +68,16 @@ async function main(argv: string[]): Promise<void> {
 
   switch (command) {
     case "serve":
+      const startRequest = rawCommand === "start" ? parseStartRequest(args) : undefined;
+      if (startRequest && !startRequest.backgroundChild) {
+        const launchRoot = resolve(process.cwd());
+        process.env.AUVRYNT_ALLOWED_ROOTS = launchRoot;
+        process.env.AUVRYNT_WORKTREE_ROOT = launchRoot;
+        await ensureConfigured({ directoryScoped: true });
+        if (!startRequest.profiles) await ensureIntegrationChoicesConfigured();
+        await runBackgroundStart(startRequest);
+        return;
+      }
       if (rawCommand === "start") {
         // `start` is intentionally directory-scoped: the launch directory is
         // the only project root available to the web agent for this session.
@@ -68,11 +86,12 @@ async function main(argv: string[]): Promise<void> {
         process.env.AUVRYNT_WORKTREE_ROOT = launchRoot;
       }
       await ensureConfigured({ directoryScoped: rawCommand === "start" });
-      if (rawCommand === "start") {
+      if (rawCommand === "start" && !startRequest?.profiles) {
         await ensureIntegrationChoicesConfigured();
       }
+      if (startRequest?.profiles) applyIntegrationProfile(startRequest.profiles);
       const localConfig = loadConfig();
-      const instanceLock = await acquireInstanceLock(localConfig.stateDir, localConfig.host, localConfig.port);
+      const instanceLock = await acquireInstanceLock(localConfig.stateDir, localConfig.host, localConfig.port, startRequest?.profiles, resolve(process.cwd()));
       let tunnel: { process: ChildProcess; url: string } | undefined;
       let stopTunnel: (() => void) | undefined;
       try {
@@ -80,13 +99,18 @@ async function main(argv: string[]): Promise<void> {
           process.env.AUVRYNT_START_MODE = "true";
           const launchRoot = resolve(process.cwd());
           await selfHealStartIntegrations(launchRoot, localConfig.executables, localConfig.integrations);
-          tunnel = await startCloudflareTunnel(localConfig.port);
-          process.env.AUVRYNT_PUBLIC_BASE_URL = tunnel.url;
-          stopTunnel = () => {
-            if (tunnel && !tunnel.process.killed) tunnel.process.kill();
-          };
-          process.once("SIGINT", stopTunnel);
-          process.once("SIGTERM", stopTunnel);
+          const managedTunnelUrl = process.env.AUVRYNT_MANAGED_TUNNEL_URL;
+          if (managedTunnelUrl) {
+            process.env.AUVRYNT_PUBLIC_BASE_URL = managedTunnelUrl;
+          } else {
+            tunnel = await startCloudflareTunnel(localConfig.port);
+            process.env.AUVRYNT_PUBLIC_BASE_URL = tunnel.url;
+            stopTunnel = () => {
+              if (tunnel && !tunnel.process.killed) tunnel.process.kill();
+            };
+            process.once("SIGINT", stopTunnel);
+            process.once("SIGTERM", stopTunnel);
+          }
         }
         await serve();
       } finally {
@@ -128,6 +152,12 @@ async function main(argv: string[]): Promise<void> {
     case "disable":
       await runDisable();
       return;
+    case "add":
+      await runAdd(args);
+      return;
+    case "stop":
+      await runStop();
+      return;
     case "help":
       printHelp();
       return;
@@ -138,9 +168,422 @@ function normalizeCommand(command: string | undefined): Command {
   if (!command || command === "serve" || command === "start") return "serve";
   if (command === "init" || command === "doctor" || command === "config") return command;
   if (command === "status" || command === "connected" || command === "token" || command === "uninstall") return command;
-  if (command === "setup" || command === "enable" || command === "disable") return command;
+  if (command === "setup" || command === "enable" || command === "disable" || command === "add" || command === "stop") return command;
   if (command === "help" || command === "--help" || command === "-h") return "help";
   throw new Error(`Unknown command: ${command}`);
+}
+
+function applyIntegrationProfile(profiles: IntegrationKey[]): void {
+  const selected = new Set(profiles);
+  const environmentKeys: Record<IntegrationKey, string> = {
+    godotGdscript: "AUVRYNT_GODOT_GDSCRIPT_ENABLED",
+    godotCsharp: "AUVRYNT_GODOT_CSHARP_ENABLED",
+    blender: "AUVRYNT_BLENDER_ENABLED",
+    serena: "AUVRYNT_SERENA_INTEGRATION_ENABLED",
+    playwright: "AUVRYNT_PLAYWRIGHT_ENABLED",
+  };
+  for (const key of INTEGRATION_KEYS) process.env[environmentKeys[key]] = selected.has(key) ? "true" : "false";
+}
+
+async function readActiveInstance(): Promise<{ stateDir: string; lockPath: string; record: InstanceLockRecord } | undefined> {
+  const config = loadConfig();
+  const lockPath = join(config.stateDir, "server.lock");
+  const record = await readJsonFile<InstanceLockRecord>(lockPath);
+  if (!record || !Number.isInteger(record.pid) || record.pid < 1) return undefined;
+
+  const hasIdentity = Boolean(record.processPath && record.processStartedAt);
+  const ownedProcess = hasIdentity
+    ? processIdentityMatches(record.pid, record)
+    : isProcessRunning(record.pid) && await isAuvryntHealthReachable(record.host, record.port);
+  if (ownedProcess) return { stateDir: config.stateDir, lockPath, record };
+
+  await unlink(lockPath).catch(() => undefined);
+  return undefined;
+}
+
+function managedTunnelPath(stateDir: string): string {
+  return join(stateDir, "tunnel.json");
+}
+
+async function readManagedTunnel(stateDir: string, port: number): Promise<ManagedTunnelRecord | undefined> {
+  const tunnelPath = managedTunnelPath(stateDir);
+  const record = await readJsonFile<ManagedTunnelRecord>(tunnelPath);
+  if (record && Number.isInteger(record.pid) && record.pid > 0 && record.port === port
+    && /^https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com$/.test(record.url)) {
+    if (processIdentityMatches(record.pid, record)) return record;
+
+    // Migrate records written before process identity was persisted, but only
+    // when the live executable is verifiably cloudflared.
+    if (!record.processPath || !record.processStartedAt) {
+      const identity = getProcessIdentity(record.pid);
+      if (identity && /(^|[\\/])cloudflared\.exe$/i.test(identity.processPath)) {
+        const migrated = { ...record, ...identity };
+        await atomicWriteJson(tunnelPath, migrated);
+        return migrated;
+      }
+    }
+  }
+  await unlink(tunnelPath).catch(() => undefined);
+  return undefined;
+}
+
+async function ensureManagedTunnel(stateDir: string, port: number): Promise<{ record: ManagedTunnelRecord; created: boolean }> {
+  const existing = await readManagedTunnel(stateDir, port);
+  if (existing) return { record: existing, created: false };
+
+  const tunnel = await startCloudflareTunnel(port, { detached: true, logPath: join(stateDir, "cloudflared.log") });
+  if (!tunnel.process.pid) throw new Error("Cloudflare tunnel started without a process ID.");
+  const identity = getProcessIdentity(tunnel.process.pid);
+  if (!identity) {
+    tunnel.process.kill();
+    throw new Error("Could not verify the Cloudflare tunnel process.");
+  }
+  const record: ManagedTunnelRecord = { pid: tunnel.process.pid, url: tunnel.url, port, ...identity };
+  await atomicWriteJson(managedTunnelPath(stateDir), record);
+  return { record, created: true };
+}
+
+async function stopManagedTunnel(stateDir: string, port: number): Promise<boolean> {
+  const tunnel = await readManagedTunnel(stateDir, port);
+  if (!tunnel) return false;
+  if (!processIdentityMatches(tunnel.pid, tunnel)) {
+    await unlink(managedTunnelPath(stateDir)).catch(() => undefined);
+    return false;
+  }
+  try {
+    if (process.platform === "win32") {
+      execFileSync("taskkill.exe", ["/PID", String(tunnel.pid), "/F"], { stdio: "ignore" });
+    } else {
+      process.kill(tunnel.pid, "SIGTERM");
+    }
+  } catch {
+    if (isProcessRunning(tunnel.pid)) throw new Error(`Could not stop Cloudflare tunnel process ${tunnel.pid}.`);
+  } finally {
+    await unlink(managedTunnelPath(stateDir)).catch(() => undefined);
+  }
+  return true;
+}
+
+function integrationsForProfiles(profiles: IntegrationKey[]): Record<IntegrationKey, boolean> {
+  const enabled = new Set(profiles);
+  return Object.fromEntries(INTEGRATION_KEYS.map((key) => [key, enabled.has(key)])) as Record<IntegrationKey, boolean>;
+}
+
+async function postInstanceControl(
+  active: { record: InstanceLockRecord },
+  path: string,
+  body?: unknown,
+): Promise<Response> {
+  if (!active.record.controlToken) {
+    throw new Error("The running Auvrynt instance predates live management. Run `auvrynt stop`, then start it again.");
+  }
+  return fetch(httpUrl(localProbeHost(active.record.host), active.record.port, path), {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${active.record.controlToken}`,
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000),
+  });
+}
+
+async function updateActiveProfiles(
+  active: { stateDir: string; lockPath: string; record: InstanceLockRecord },
+  profiles: IntegrationKey[],
+): Promise<void> {
+  const integrations = integrationsForProfiles(profiles);
+  const config = loadConfig();
+  const healed = await selfHealStartIntegrations(
+    active.record.launchRoot ?? resolve(process.cwd()),
+    config.executables,
+    integrations,
+  );
+  const response = await postInstanceControl(active, "/__auvrynt/control/profiles", {
+    integrations,
+    serenaExecutable: healed.serenaExecutable,
+  });
+  const result = await response.json().catch(() => ({})) as { error?: string };
+  if (!response.ok) {
+    throw new Error(result.error || `The running Auvrynt instance rejected the update (${response.status}).`);
+  }
+  active.record.profiles = profiles;
+  await atomicWriteJson(active.lockPath, active.record);
+}
+
+async function terminateRootProcess(pid: number): Promise<void> {
+  try {
+    if (process.platform === "win32") {
+      execFileSync("taskkill.exe", ["/PID", String(pid), "/F"], { stdio: "ignore" });
+    } else {
+      process.kill(pid, "SIGTERM");
+    }
+  } catch {
+    if (isProcessRunning(pid)) throw new Error(`Could not stop Auvrynt process ${pid}.`);
+  }
+}
+
+async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isProcessRunning(pid)) return true;
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+  }
+  return !isProcessRunning(pid);
+}
+
+function findLegacyCloudflaredChildren(parentPid: number): Array<{ pid: number; processPath: string; processStartedAt: string }> {
+  if (process.platform !== "win32") return [];
+  try {
+    const script = [
+      `$items = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = ${parentPid}" -ErrorAction Stop`,
+      "| Where-Object { $_.Name -ieq 'cloudflared.exe' }",
+      "| ForEach-Object { $p = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue; if ($p) { [pscustomobject]@{ pid = $_.ProcessId; processPath = $p.Path; processStartedAt = $p.StartTime.ToUniversalTime().ToString('o') } } })",
+      "$items | ConvertTo-Json -Compress",
+    ].join(" ; ").replace(/ ; \|/g, " |");
+    const raw = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+    }).trim();
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    const items = Array.isArray(parsed) ? parsed : [parsed];
+    return items.filter((item): item is { pid: number; processPath: string; processStartedAt: string } => {
+      if (!item || typeof item !== "object") return false;
+      const candidate = item as Record<string, unknown>;
+      return Number.isInteger(candidate.pid)
+        && typeof candidate.processPath === "string"
+        && /(^|[\\/])cloudflared\.exe$/i.test(candidate.processPath)
+        && typeof candidate.processStartedAt === "string";
+    });
+  } catch {
+    return [];
+  }
+}
+
+async function adoptLegacyManagedTunnel(
+  active: { stateDir: string; record: InstanceLockRecord },
+): Promise<ManagedTunnelRecord | undefined> {
+  const existing = await readManagedTunnel(active.stateDir, active.record.port);
+  if (existing) return existing;
+  const children = findLegacyCloudflaredChildren(active.record.pid);
+  if (children.length !== 1) return undefined;
+  const output = await readFile(join(active.stateDir, "cloudflared.log"), "utf8").catch(() => "");
+  const urls = output.match(/https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/g);
+  const url = urls?.at(-1);
+  if (!url) return undefined;
+  const child = children[0];
+  const record: ManagedTunnelRecord = { ...child, url, port: active.record.port };
+  await atomicWriteJson(managedTunnelPath(active.stateDir), record);
+  return record;
+}
+
+async function waitForBackgroundReady(
+  stateDir: string,
+  pid: number,
+  host: string,
+  port: number,
+  spawnError: () => Error | undefined,
+): Promise<InstanceLockRecord> {
+  const deadline = Date.now() + 30_000;
+  const lockPath = join(stateDir, "server.lock");
+  while (Date.now() < deadline) {
+    const error = spawnError();
+    if (error) throw new Error(`Auvrynt failed to start: ${error.message}`);
+    if (!isProcessRunning(pid)) throw new Error("Auvrynt exited before becoming ready.");
+    const record = await readJsonFile<InstanceLockRecord>(lockPath);
+    if (record?.pid === pid && await isAuvryntHealthReachable(host, port) && processIdentityMatches(pid, record)) {
+      return record;
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 200));
+  }
+  throw new Error("Auvrynt did not become ready within 30 seconds.");
+}
+
+async function runBackgroundStartUnlocked(request: StartRequest, launchRoot: string): Promise<void> {
+  const active = await readActiveInstance();
+  const config = loadConfig();
+  const saved = completeIntegrationsConfig(loadAuvryntFiles().config.integrations);
+  const profiles = request.profiles ?? INTEGRATION_KEYS.filter((key) => saved[key]);
+  if (active) {
+    let replace = request.replace;
+    if (!replace && input.isTTY && output.isTTY) {
+      const answer = await prompts.confirm({ message: `Replace running Auvrynt instance (PID ${active.record.pid})?`, initialValue: false });
+      if (prompts.isCancel(answer) || !answer) {
+        console.log("Auvrynt start cancelled.");
+        return;
+      }
+      replace = true;
+    }
+    if (!replace) throw new Error(`Auvrynt is already running (PID ${active.record.pid}). Re-run with --replace to override it.`);
+    if (resolve(active.record.launchRoot ?? launchRoot) === resolve(launchRoot) && active.record.controlToken) {
+      await updateActiveProfiles(active, profiles);
+      const tunnel = await readManagedTunnel(active.stateDir, active.record.port);
+      console.log(`Updated the running Auvrynt instance (PID ${active.record.pid}) without restarting it.`);
+      console.log(`Enabled: ${profiles.map((key) => INTEGRATION_LABELS[key]).join(", ") || "none"}.`);
+      if (tunnel) console.log(`Cloudflare URL: ${tunnel.url}/mcp`);
+      return;
+    }
+    await adoptLegacyManagedTunnel(active);
+    await stopActiveInstance(active);
+  }
+
+  await mkdir(config.stateDir, { recursive: true, mode: 0o700 });
+  await selfHealStartIntegrations(launchRoot, config.executables, integrationsForProfiles(profiles));
+  const tunnelResult = await ensureManagedTunnel(config.stateDir, config.port);
+  const tunnel = tunnelResult.record;
+  const logPath = join(config.stateDir, "auvrynt.log");
+  await rotateLogFile(logPath);
+  const logHandle = openSync(logPath, "a", 0o600);
+  const childArgs = [process.argv[1], "start", "--background-child"];
+  if (profiles.length > 0) childArgs.push(profiles.join(","));
+  const controlToken = randomBytes(32).toString("base64url");
+  const child = spawn(process.execPath, childArgs, {
+    cwd: launchRoot,
+    detached: true,
+    stdio: ["ignore", logHandle, logHandle],
+    windowsHide: true,
+    env: { ...process.env, AUVRYNT_CONTROL_TOKEN: controlToken, AUVRYNT_MANAGED_TUNNEL_URL: tunnel.url },
+  });
+  closeSync(logHandle);
+  let childSpawnError: Error | undefined;
+  child.once("error", (error) => {
+    childSpawnError = error;
+  });
+  if (!child.pid) {
+    if (tunnelResult.created) await stopManagedTunnel(config.stateDir, config.port);
+    throw new Error("Auvrynt could not create its background process.");
+  }
+  child.unref();
+  try {
+    await waitForBackgroundReady(config.stateDir, child.pid, config.host, config.port, () => childSpawnError);
+  } catch (error) {
+    await terminateRootProcess(child.pid).catch(() => undefined);
+    if (tunnelResult.created) await stopManagedTunnel(config.stateDir, config.port).catch(() => undefined);
+    throw error;
+  }
+  const profileText = profiles.map((key) => INTEGRATION_LABELS[key]).join(", ") || "no optional integrations";
+  console.log(`Auvrynt is running in the background (PID ${child.pid}) with: ${profileText}.`);
+  console.log(`Cloudflare URL: ${tunnel.url}/mcp`);
+  console.log(`Run \`auvrynt status\` to check it, \`auvrynt stop\` to stop it.`);
+}
+
+async function runBackgroundStart(request: StartRequest, launchRoot = resolve(process.cwd())): Promise<void> {
+  const config = loadConfig();
+  const management = await acquireManagementLock(config.stateDir);
+  try {
+    await runBackgroundStartUnlocked(request, launchRoot);
+  } finally {
+    await management.release();
+  }
+}
+
+async function stopActiveInstance(active: { stateDir: string; lockPath: string; record: InstanceLockRecord }): Promise<void> {
+  const hasIdentity = Boolean(active.record.processPath && active.record.processStartedAt);
+  const stillOwned = hasIdentity
+    ? processIdentityMatches(active.record.pid, active.record)
+    : isProcessRunning(active.record.pid) && await isAuvryntHealthReachable(active.record.host, active.record.port);
+  if (!stillOwned) {
+    await unlink(active.lockPath).catch(() => undefined);
+    return;
+  }
+  const managedTunnel = await readManagedTunnel(active.stateDir, active.record.port);
+  const legacyTunnels = active.record.controlToken
+    ? []
+    : findLegacyCloudflaredChildren(active.record.pid).filter((candidate) => candidate.pid !== managedTunnel?.pid);
+  if (active.record.controlToken) {
+    try {
+      const response = await postInstanceControl(active, "/__auvrynt/control/shutdown");
+      if (!response.ok) throw new Error(`Shutdown request failed (${response.status}).`);
+    } catch {
+      await terminateRootProcess(active.record.pid);
+    }
+  } else {
+    await terminateRootProcess(active.record.pid);
+  }
+  if (!await waitForProcessExit(active.record.pid, 10_000)) {
+    await terminateRootProcess(active.record.pid);
+  }
+  if (!await waitForProcessExit(active.record.pid, 2_000)) throw new Error(`Could not stop Auvrynt process ${active.record.pid}.`);
+  for (const tunnel of legacyTunnels) {
+    if (!processIdentityMatches(tunnel.pid, tunnel)) continue;
+    await terminateRootProcess(tunnel.pid).catch(() => undefined);
+  }
+  const current = await readJsonFile<InstanceLockRecord>(active.lockPath);
+  if (current?.instanceId === active.record.instanceId) {
+    await unlink(active.lockPath).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    });
+  }
+}
+
+async function runStop(): Promise<void> {
+  const config = loadConfig();
+  const management = await acquireManagementLock(config.stateDir);
+  let active: Awaited<ReturnType<typeof readActiveInstance>>;
+  let tunnelStopped = false;
+  let serverError: unknown;
+  let tunnelError: unknown;
+  try {
+    active = await readActiveInstance();
+    try {
+      if (active) await stopActiveInstance(active);
+    } catch (error) {
+      serverError = error;
+    } finally {
+      try {
+        tunnelStopped = await stopManagedTunnel(config.stateDir, config.port);
+      } catch (error) {
+        tunnelError = error;
+      }
+    }
+  } finally {
+    await management.release();
+  }
+  if (serverError || tunnelError) {
+    throw new AggregateError(
+      [serverError, tunnelError].filter((error): error is object => Boolean(error)),
+      "Auvrynt could not stop all managed processes.",
+    );
+  }
+  if (!active && !tunnelStopped) return void console.log("Auvrynt is not running.");
+  console.log("Stopped Auvrynt and its Cloudflare tunnel.");
+}
+
+async function runAdd(args: string[]): Promise<void> {
+  const additions = parseIntegrationProfiles(args);
+  const config = loadConfig();
+  const management = await acquireManagementLock(config.stateDir);
+  try {
+    const active = await readActiveInstance();
+    const saved = completeIntegrationsConfig(loadAuvryntFiles().config.integrations);
+    const current = active?.record.profiles ?? INTEGRATION_KEYS.filter((key) => saved[key]);
+    const profiles = Array.from(new Set([...current, ...additions]));
+    if (active) {
+      if (!active.record.controlToken) {
+        await adoptLegacyManagedTunnel(active);
+        await stopActiveInstance(active);
+        await runBackgroundStartUnlocked(
+          { profiles, replace: true, backgroundChild: false },
+          active.record.launchRoot ?? resolve(process.cwd()),
+        );
+        return;
+      }
+      await updateActiveProfiles(active, profiles);
+      const tunnel = await readManagedTunnel(active.stateDir, active.record.port);
+      console.log(`Updated the running Auvrynt instance (PID ${active.record.pid}) without restarting it.`);
+      console.log(`Enabled: ${profiles.map((key) => INTEGRATION_LABELS[key]).join(", ")}.`);
+      if (tunnel) console.log(`Cloudflare URL: ${tunnel.url}/mcp`);
+      return;
+    }
+    await runBackgroundStartUnlocked(
+      { profiles, replace: true, backgroundChild: false },
+      resolve(process.cwd()),
+    );
+  } finally {
+    await management.release();
+  }
 }
 
 async function ensureConfigured(options: { directoryScoped?: boolean } = {}): Promise<void> {
@@ -299,6 +742,49 @@ async function serve(): Promise<void> {
 
   // Probe integration ports before starting the server
   const integrationStatus = await discoverLocalIntegrations();
+  const controlToken = process.env.AUVRYNT_CONTROL_TOKEN;
+  let requestShutdown: (() => void) | undefined;
+
+  const controlAuthorized = (authorization: string | undefined): boolean => {
+    if (!controlToken || !authorization?.startsWith("Bearer ")) return false;
+    const provided = Buffer.from(authorization.slice("Bearer ".length));
+    const expected = Buffer.from(controlToken);
+    return provided.length === expected.length && timingSafeEqual(provided, expected);
+  };
+
+  if (controlToken) {
+    app.post("/__auvrynt/control/profiles", async (req, res) => {
+      if (!controlAuthorized(req.header("authorization"))) {
+        res.status(404).end();
+        return;
+      }
+      const body = req.body as { integrations?: unknown; serenaExecutable?: unknown };
+      const integrations = body?.integrations;
+      if (!integrations || typeof integrations !== "object"
+        || !INTEGRATION_KEYS.every((key) => typeof (integrations as Record<string, unknown>)[key] === "boolean")) {
+        res.status(400).json({ error: "Invalid integration profile." });
+        return;
+      }
+      const result = await runningServer.updateIntegrations(
+        integrations as Record<IntegrationKey, boolean>,
+        typeof body.serenaExecutable === "string" ? { serenaExecutable: body.serenaExecutable } : undefined,
+      );
+      if (!result.updated) {
+        res.status(409).json({ error: "An MCP request is active; retry after it finishes.", ...result });
+        return;
+      }
+      res.json(result);
+    });
+
+    app.post("/__auvrynt/control/shutdown", (req, res) => {
+      if (!controlAuthorized(req.header("authorization"))) {
+        res.status(404).end();
+        return;
+      }
+      res.status(202).json({ stopping: true });
+      setImmediate(() => requestShutdown?.());
+    });
+  }
 
   function integrationLine(label: string, reachable: boolean, configured?: boolean, enabled = true): string {
     const padded = label.padEnd(20);
@@ -326,7 +812,9 @@ async function serve(): Promise<void> {
       const blenderBridgeUp = integrationStatus.ports.auvrynt_blender_bridge || integrationStatus.ports.blender_lab_mcp;
       const godotConfigured = godotIsSetup || godotPlugin.installed;
       const godotCsharpConfigured = Boolean(config.executables.godotCsharp);
-      const blenderConfigured = Boolean(integrationStatus.executables.blender);
+      // Blender Lab's MCP extension is discovered by its local port. A Blender
+      // executable path is optional and must not control this status label.
+      const blenderConfigured = true;
       const serenaConfigured = Boolean(process.env.AUVRYNT_SERENA_EXECUTABLE || integrationStatus.executables.serena || processDetected(integrationStatus, "serena"));
       const playwrightReady = getPlaywrightRuntimeStatus().chromiumInstalled;
       console.log(integrationLine("Godot GDScript:", godotBridgeUp, godotConfigured, config.integrations.godotGdscript));
@@ -403,6 +891,7 @@ async function serve(): Promise<void> {
         });
       });
     };
+    requestShutdown = shutdown;
     httpServer.once("error", (error) => {
       removeSignalHandlers();
       void runningServer.close().finally(() => rejectServer(error));
@@ -435,22 +924,18 @@ async function runDoctor(): Promise<void> {
   }
 }
 
-interface InstanceLockRecord {
-  instanceId: string;
-  pid: number;
-  startedAt: string;
-  host: string;
-  port: number;
-}
-
 async function acquireInstanceLock(
   stateDir: string,
   host: string,
   port: number,
+  profiles?: IntegrationKey[],
+  launchRoot?: string,
 ): Promise<{ release: () => Promise<void> }> {
   const lockPath = join(stateDir, "server.lock");
   await mkdir(stateDir, { recursive: true, mode: 0o700 });
   await chmod(stateDir, 0o700).catch(() => undefined);
+  const identity = getProcessIdentity(process.pid);
+  if (!identity) throw new Error("Could not identify the Auvrynt server process.");
 
   for (let attempt = 0; attempt < 3; attempt++) {
     const instanceId = randomBytes(16).toString("hex");
@@ -462,10 +947,18 @@ async function acquireInstanceLock(
         startedAt: new Date().toISOString(),
         host,
         port,
+        profiles,
+        launchRoot,
+        controlToken: process.env.AUVRYNT_CONTROL_TOKEN,
+        ...identity,
       };
-      await handle.writeFile(JSON.stringify(record));
-      await handle.sync();
-      return { release: () => releaseInstanceLock(handle, lockPath, instanceId) };
+      try {
+        await handle.writeFile(JSON.stringify(record));
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      return { release: () => releaseInstanceLock(lockPath, instanceId) };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
 
@@ -477,7 +970,11 @@ async function acquireInstanceLock(
       }
 
       const ownerPid = Number.isInteger(lock?.pid) && Number(lock?.pid) > 0 ? Number(lock?.pid) : undefined;
-      if (ownerPid && isProcessRunning(ownerPid)) {
+      const hasIdentity = Boolean(lock?.processPath && lock?.processStartedAt);
+      const ownerMatches = ownerPid
+        ? hasIdentity ? processIdentityMatches(ownerPid, lock ?? {}) : isProcessRunning(ownerPid)
+        : false;
+      if (ownerPid && ownerMatches) {
         const lockHost = typeof lock?.host === "string" ? lock.host : host;
         const candidateLockPort = lock?.port;
         const lockPort = Number.isInteger(candidateLockPort) ? Number(candidateLockPort) : port;
@@ -500,15 +997,6 @@ async function acquireInstanceLock(
   throw new Error("Could not acquire the Auvrynt server lock after clearing stale lock state.");
 }
 
-function isProcessRunning(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function isAuvryntHealthReachable(host: string, port: number): Promise<boolean> {
   if (!Number.isInteger(port) || port < 1 || port > 65535) return false;
   if (!host || /[\/@?#]/.test(host)) return false;
@@ -524,8 +1012,7 @@ async function isAuvryntHealthReachable(host: string, port: number): Promise<boo
   }
 }
 
-async function releaseInstanceLock(handle: FileHandle, lockPath: string, instanceId: string): Promise<void> {
-  await handle.close().catch(() => undefined);
+async function releaseInstanceLock(lockPath: string, instanceId: string): Promise<void> {
   let raw: string;
   try {
     raw = await readFile(lockPath, "utf8");
@@ -547,11 +1034,44 @@ async function releaseInstanceLock(handle: FileHandle, lockPath: string, instanc
   });
 }
 
-async function startCloudflareTunnel(port: number): Promise<{ process: ChildProcess; url: string }> {
+async function startCloudflareTunnel(port: number, options: { detached?: boolean; logPath?: string } = {}): Promise<{ process: ChildProcess; url: string }> {
   const executable = await resolveCloudflaredExecutable();
+  if (options.detached && options.logPath) {
+    await writeFile(options.logPath, "", { mode: 0o600 });
+    const logHandle = openSync(options.logPath, "a");
+    const child = spawn(executable, ["tunnel", "--no-autoupdate", "--url", `http://127.0.0.1:${port}`], {
+      stdio: ["ignore", logHandle, logHandle],
+      windowsHide: true,
+      detached: true,
+    });
+    closeSync(logHandle);
+    let spawnError: Error | undefined;
+    child.once("error", (error) => {
+      spawnError = error;
+    });
+
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      if (spawnError) throw new Error(`Cloudflare tunnel failed to start: ${spawnError.message}`);
+      if (!child.pid || !isProcessRunning(child.pid)) {
+        throw new Error("Cloudflare tunnel exited before connecting.");
+      }
+      const output = await readFile(options.logPath, "utf8").catch(() => "");
+      const match = output.match(/https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/);
+      if (match) {
+        child.unref();
+        return { process: child, url: match[0] };
+      }
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+    }
+    child.kill();
+    throw new Error("Cloudflare tunnel did not provide a public URL within 30 seconds.");
+  }
+
   const child = spawn(executable, ["tunnel", "--no-autoupdate", "--url", `http://127.0.0.1:${port}`], {
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
+    detached: options.detached,
   });
   const tunnelUrl = await new Promise<string>((resolveUrl, reject) => {
     let output = "";
@@ -612,6 +1132,15 @@ async function resolveCloudflaredExecutable(): Promise<string> {
     ).split(/\r?\n/)[0]?.trim() || "cloudflared";
   } catch {
     if (process.platform === "win32") {
+      const managedExecutable = join(homedir(), ".auvrynt", "bin", "cloudflared.exe");
+      if (existsSync(managedExecutable)) {
+        try {
+          execFileSync(managedExecutable, ["--version"], { stdio: "ignore" });
+          return managedExecutable;
+        } catch {
+          // A partial or corrupt managed binary is replaced by the verified installer below.
+        }
+      }
       return installWindowsCloudflared();
     }
     throw new Error(
@@ -675,10 +1204,11 @@ async function selfHealStartIntegrations(
   launchRoot: string,
   executables: Record<string, string | undefined>,
   integrations: Record<IntegrationKey, boolean>,
-): Promise<void> {
+): Promise<{ serenaExecutable?: string }> {
+  let serenaExecutable: string | undefined;
   if (integrations.serena) {
     process.env.AUVRYNT_SERENA_ENABLED = "true";
-    const serenaExecutable = await ensureSerenaExecutable();
+    serenaExecutable = await ensureSerenaExecutable();
     process.env.AUVRYNT_SERENA_EXECUTABLE = serenaExecutable;
     execFileSync(serenaExecutable, ["--version"], { stdio: "ignore" });
   } else {
@@ -689,12 +1219,12 @@ async function selfHealStartIntegrations(
     ensurePlaywrightRuntime();
   }
 
-  if (!integrations.godotGdscript && !integrations.godotCsharp) return;
+  if (!integrations.godotGdscript && !integrations.godotCsharp) return { serenaExecutable };
 
   ensureGlobalGodotPlugin();
   await ensureGodotPluginForLaunchRoot(launchRoot);
 
-  if (!existsSync(join(launchRoot, "project.godot"))) return;
+  if (!existsSync(join(launchRoot, "project.godot"))) return { serenaExecutable };
 
   let discovery = await discoverLocalIntegrations();
   if (!discovery.ports.auvrynt_godot_bridge && !processDetected(discovery, "godot")) {
@@ -713,9 +1243,10 @@ async function selfHealStartIntegrations(
 
   for (let attempt = 0; attempt < 10; attempt++) {
     discovery = await discoverLocalIntegrations();
-    if (discovery.ports.auvrynt_godot_bridge) return;
+    if (discovery.ports.auvrynt_godot_bridge) return { serenaExecutable };
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
   }
+  return { serenaExecutable };
 }
 
 async function ensureSerenaExecutable(): Promise<string> {
@@ -835,6 +1366,8 @@ async function runStatus(): Promise<void> {
   const host = files.config.host ?? "127.0.0.1";
   const port = files.config.port ?? 49321;
   const healthUrl = httpUrl(localProbeHost(host), port, "/healthz");
+  const active = await readActiveInstance();
+  const tunnel = await readManagedTunnel(loadConfig().stateDir, port);
 
   try {
     const response = await fetch(healthUrl, { signal: AbortSignal.timeout(1500) });
@@ -846,6 +1379,14 @@ async function runStatus(): Promise<void> {
     console.log(`Health URL: ${healthUrl}`);
     console.log(`Detail: ${error instanceof Error ? error.message : String(error)}`);
   }
+  if (active) {
+    console.log(`Managed instance: PID ${active.record.pid}`);
+    console.log(`Workspace: ${active.record.launchRoot ?? "unknown"}`);
+    console.log(`Profiles: ${active.record.profiles?.map((key) => INTEGRATION_LABELS[key]).join(", ") || "saved integrations"}`);
+  } else {
+    console.log("Managed instance: not running");
+  }
+  console.log(`Public MCP: ${tunnel ? `${tunnel.url}/mcp` : "not running"}`);
 
   const local = await discoverLocalIntegrations();
   const godotPlugin = getGlobalGodotPluginStatus();
@@ -951,7 +1492,16 @@ function printHelp(): void {
       "",
       "Usage:",
       "  auvrynt                 Run first-time setup if needed, then start the server",
-      "  auvrynt start           Start a Cloudflare tunnel scoped to the current directory",
+      "  auvrynt start           Start enabled integrations in the background for this directory",
+      "  auvrynt start model     Start Blender MCP detection only",
+      "  auvrynt start web       Start Playwright/browser tools only",
+      "  auvrynt start godotcs   Start Godot C# only",
+      "  auvrynt start godotgd   Start Godot GDScript only",
+      "  auvrynt start se        Start Serena only",
+      "  auvrynt start model,godotcs  Start multiple profiles (comma-separated)",
+      "  auvrynt start ... --replace  Live-replace profiles, or change the managed workspace",
+      "  auvrynt add web         Add profiles live without restarting the server or tunnel",
+      "  auvrynt stop            Stop Auvrynt and its Cloudflare tunnel",
       "  auvrynt serve           Start the server with verbose console logs",
       "  auvrynt init            Create or update ~/.auvrynt/config.json and auth.json",
       "  auvrynt setup           Configure executable paths for local tools",
@@ -966,8 +1516,8 @@ function printHelp(): void {
       "  auvrynt config get      Print persisted config",
       "  auvrynt config set publicBaseUrl <url|null>",
       "",
-      "For temporary tunnels:",
-      "  AUVRYNT_PUBLIC_BASE_URL=https://example.trycloudflare.com auvrynt start",
+      "For a custom foreground tunnel:",
+      "  AUVRYNT_PUBLIC_BASE_URL=https://example.com auvrynt serve",
     ].join("\n"),
   );
 }

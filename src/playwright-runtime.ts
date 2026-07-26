@@ -30,6 +30,18 @@ function resolvePlaywrightModule(): { path: string; source: "package" | "managed
   return undefined;
 }
 
+function resolveNpmCli(): string {
+  const candidates = [
+    process.env.npm_execpath,
+    join(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js"),
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  const npmCli = candidates.find((candidate) => existsSync(candidate));
+  if (!npmCli) {
+    throw new Error("npm-cli.js was not found beside Node.js. Reinstall Node.js with npm included.");
+  }
+  return npmCli;
+}
+
 export function getPlaywrightRuntimeStatus(): PlaywrightRuntimeStatus {
   const resolved = resolvePlaywrightModule();
   if (!resolved) {
@@ -68,13 +80,21 @@ export async function loadPlaywright(): Promise<any> {
 
 export function ensurePlaywrightRuntime(): PlaywrightRuntimeStatus {
   let status = getPlaywrightRuntimeStatus();
-  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 
   if (!status.packageInstalled) {
     mkdirSync(MANAGED_ROOT, { recursive: true });
     execFileSync(
-      npm,
-      ["install", "--prefix", MANAGED_ROOT, "--no-save", "--package-lock=false", "--ignore-scripts", `playwright@${PLAYWRIGHT_VERSION}`],
+      process.execPath,
+      [
+        resolveNpmCli(),
+        "install",
+        "--prefix",
+        MANAGED_ROOT,
+        "--no-save",
+        "--package-lock=false",
+        "--ignore-scripts",
+        `playwright@${PLAYWRIGHT_VERSION}`,
+      ],
       { stdio: "inherit" },
     );
     status = getPlaywrightRuntimeStatus();

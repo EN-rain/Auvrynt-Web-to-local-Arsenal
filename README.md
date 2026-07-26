@@ -57,9 +57,11 @@ npm install -g auvrynt
 **Set up and start:**
 
 ```bash
-auvrynt init
 auvrynt start
 ```
+
+`auvrynt start` creates local configuration automatically. Use `auvrynt init`
+only when you want to configure foreground `auvrynt serve` manually.
 
 **Or run directly without installing:**
 
@@ -74,7 +76,7 @@ During `auvrynt init`, you will be asked for:
 |---|---|
 | Project roots | Local folder paths your AI is allowed to access |
 | Local port | Default is `49321` |
-| Public base URL | Your tunnel URL (Cloudflare, ngrok, Pinggy, Tailscale, etc.) |
+| Public base URL | The tunnel URL used by foreground `auvrynt serve` |
 
 > **Important:** Provide the base URL — do **not** include `/mcp`. Example: `https://your-tunnel.trycloudflare.com`
 
@@ -83,25 +85,48 @@ During `auvrynt init`, you will be asked for:
 ## Start the Server
 
 ```bash
-# Clean animated mode (shows public URL + password, with live log indicator)
+# Starts one managed background instance, scoped to the current directory
 auvrynt start
 
-# Verbose mode (shows full request logs in terminal)
+# Check or stop the background instance
+auvrynt status
+auvrynt stop
+
+# Foreground server with verbose request logs
 auvrynt serve
 ```
 
-After startup, the terminal shows:
+When using foreground `auvrynt serve`, the terminal shows request activity. Background `auvrynt start` returns only after the local server and tunnel are ready; use `auvrynt status` to inspect the managed PID, workspace, profiles, and public URL.
 
+---
+
+`auvrynt start` starts one temporary Cloudflare tunnel and one Auvrynt server in the background. It does not keep the terminal occupied. The tunnel stays alive while profiles are added or replaced, so its URL remains the same until `auvrynt stop` or the Cloudflare process itself exits. A second start asks before changing the existing instance; use `--replace` when running non-interactively.
+
+### Start only what you need
+
+Profiles are session-only: they override saved integration choices for the current background instance without changing your config.
+
+```bash
+# One integration
+auvrynt start model      # Blender MCP port detection
+auvrynt start web        # Playwright/browser tools
+auvrynt start godotcs    # Godot C#
+auvrynt start godotgd    # Godot GDScript
+auvrynt start se         # Serena
+
+# Multiple integrations
+auvrynt start model,godotcs
+
+# Add an integration live; neither the server nor tunnel restarts
+auvrynt add web
+
+# Replace profiles live when the workspace is unchanged
+auvrynt start se --replace
 ```
-Auvrynt is running!
 
-  Public URL:     https://your-tunnel.trycloudflare.com/mcp
-  Owner Password: <your-generated-password>
+Live profile changes wait until no MCP request is active, then refresh connected MCP sessions so clients can rediscover the tool list. They do not restart Auvrynt, Cloudflare, Blender, Godot, Serena, or tracked development processes. Starting with `--replace` from a different directory gracefully changes the managed workspace while preserving the tunnel.
 
-  # CTRL + C to stop
-
-  ⠋ Logs active... (0 requests handled | Last: Started successfully)
-```
+`auvrynt stop` gracefully stops Auvrynt and then its Cloudflare tunnel. It does not close Blender or Godot. Lifecycle commands are serialized, so two terminals cannot create duplicate managed instances.
 
 ---
 
@@ -128,7 +153,11 @@ It is stored locally in `~/.auvrynt/auth.json`. Keep it private and do not paste
 | Command | Description |
 |---|---|
 | `auvrynt init` | Run first-time setup or update your config |
-| `auvrynt start` | Start a Cloudflare tunnel scoped to the current directory |
+| `auvrynt start [profiles]` | Start one managed background instance scoped to the current directory |
+| `auvrynt start model,web` | Start selected profiles: `model`, `web`, `godotcs`, `godotgd`, `se` |
+| `auvrynt start ... --replace` | Live-replace profiles, or switch the managed workspace without changing the tunnel |
+| `auvrynt add <profiles>` | Add profiles live without restarting the server or tunnel |
+| `auvrynt stop` | Stop Auvrynt and its Cloudflare tunnel |
 | `auvrynt serve` | Start the server with verbose log output |
 | `auvrynt doctor` | Show your config, Node version, and dependency health |
 | `auvrynt status` | Show local MCP and integration status without modifying integration files |
@@ -138,13 +167,7 @@ It is stored locally in `~/.auvrynt/auth.json`. Keep it private and do not paste
 | `auvrynt uninstall -y` | Remove Auvrynt configuration without confirmation |
 | `auvrynt help` | Print the complete command reference |
 | `auvrynt config get` | Print your saved configuration |
-| `auvrynt config set publicBaseUrl <url>` | Update your public tunnel URL |
-
-**Override the tunnel URL for a one-off run:**
-
-```bash
-AUVRYNT_PUBLIC_BASE_URL=https://new-tunnel.example.com auvrynt start
-```
+| `auvrynt config set publicBaseUrl <url>` | Set the public URL used by foreground `auvrynt serve` |
 
 ---
 
@@ -207,7 +230,7 @@ Key environment variables:
 | Variable | Description |
 |---|---|
 | `AUVRYNT_ALLOWED_ROOTS` | Comma-separated project root paths |
-| `AUVRYNT_PUBLIC_BASE_URL` | Your public tunnel origin (no `/mcp`) |
+| `AUVRYNT_PUBLIC_BASE_URL` | Public origin for foreground `auvrynt serve` (no `/mcp`) |
 | `AUVRYNT_OAUTH_OWNER_TOKEN` | Override the owner token directly |
 | `AUVRYNT_LOG_FORMAT` | `json` (default) or `pretty` |
 

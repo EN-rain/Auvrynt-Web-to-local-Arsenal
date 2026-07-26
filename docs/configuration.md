@@ -33,7 +33,7 @@ npx auvrynt config set publicBaseUrl https://auvrynt.example.com
 | `HOST` | Local bind host. Defaults to `127.0.0.1`. |
 | `PORT` | Local port. Defaults to `49321`. |
 | `AUVRYNT_ALLOWED_ROOTS` | Comma-separated local roots that workspaces may open. |
-| `AUVRYNT_PUBLIC_BASE_URL` | Public origin for the server, without `/mcp`. |
+| `AUVRYNT_PUBLIC_BASE_URL` | Public origin used by foreground `auvrynt serve`, without `/mcp`. Managed `auvrynt start` supplies its Cloudflare URL automatically. |
 | `AUVRYNT_ALLOWED_HOSTS` | Optional Host header allowlist override. |
 | `AUVRYNT_OAUTH_OWNER_TOKEN` | Owner token for OAuth approval. Must be at least 16 characters. |
 | `AUVRYNT_WORKTREE_ROOT` | Directory for managed Git worktrees. Defaults to `~/.auvrynt/worktrees`. |

@@ -84,11 +84,6 @@ set GODOT_DOTNET_EXECUTABLE=C:\Godot\Godot_v4.4_mono_win64.exe
 set GODOT_EXECUTABLE=C:\Godot\Godot_v4.4_stable_win64.exe
 ```
 
-On macOS/Linux:
-```sh
-export GODOT_DOTNET_EXECUTABLE=/Applications/Godot_mono.app/Contents/MacOS/Godot
-```
-
 ---
 
 ## Quick Start — New Project

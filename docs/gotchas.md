@@ -67,18 +67,15 @@ npx auvrynt config set publicBaseUrl https://your-tunnel-host.example.com
 
 ## Tunnel URL Changed
 
-Temporary tunnels often change URLs between runs.
+The managed quick-tunnel URL stays unchanged across `auvrynt add` and
+same-directory `auvrynt start ... --replace`. It normally changes after
+`auvrynt stop` followed by a new start.
 
-For a one-off run:
-
-```bash
-AUVRYNT_PUBLIC_BASE_URL="https://new-tunnel.example.com" npx auvrynt start
-```
-
-For a stable URL:
+For a stable independently managed URL, use foreground mode:
 
 ```bash
 npx auvrynt config set publicBaseUrl https://auvrynt.example.com
+npx auvrynt serve
 ```
 
 ## Host Header Or 403 Problems
@@ -116,7 +113,7 @@ If another MCP client uses a different redirect host, configure:
 AUVRYNT_OAUTH_ALLOWED_REDIRECT_HOSTS="chatgpt.com,example.com" npx auvrynt start
 ```
 
-## Owner Password Not Accepted
+## Owner Token Not Accepted
 
 Make sure you are entering the Owner token from:
 

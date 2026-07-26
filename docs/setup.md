@@ -7,41 +7,36 @@ projects through Auvrynt.
 
 - Node `>=20.12 <27`; Node 22 LTS is recommended
 - npm
-- Git
-- Bash, including Git Bash or WSL on Windows
-- a public HTTPS URL that forwards to the local Auvrynt server
+- Git for Windows (includes the Bash runtime used by agent shell tools)
+- Windows PowerShell or cmd.exe
+- Internet access for the managed Cloudflare quick tunnel
 
-Auvrynt does not create the public tunnel for you. Use Cloudflare Tunnel,
-ngrok, Pinggy, Tailscale Funnel, or your own HTTPS reverse proxy.
+`auvrynt start` installs Cloudflare Tunnel when needed and creates a temporary
+public URL automatically.
 
-## Install And Configure
+## Install And Start
 
 Run:
 
-```bash
-npx auvrynt init
+```powershell
+npm install -g auvrynt
+cd C:\path\to\your\project
+auvrynt start
 ```
 
-The setup flow asks one question at a time.
+The first start creates local configuration and asks which optional
+integrations to enable. The launch directory becomes the only project root
+available to that managed instance.
+
+Run `auvrynt init` only if you want to configure foreground `auvrynt serve`
+manually. That setup flow asks one question at a time:
 
 ### Project Roots
 
 Choose the folders ChatGPT is allowed to open through Auvrynt. Keep this
 narrow.
 
-Examples:
-
-```text
-~/personal,~/work
-```
-
-```text
-/Users/alice/dev,/Users/alice/work
-```
-
-```text
-C:\Users\alice\dev,C:\Users\alice\work
-```
+Example: `C:\Users\alice\dev,C:\Users\alice\work`.
 
 ### Local Port
 
@@ -55,8 +50,8 @@ http://127.0.0.1:49321/mcp
 
 ### Public Base URL
 
-Start your tunnel or reverse proxy before entering this value. Point the tunnel
-at:
+This setting applies to foreground `auvrynt serve`; managed `auvrynt start`
+creates its own Cloudflare URL. Point your independently managed tunnel at:
 
 ```text
 http://127.0.0.1:49321
@@ -78,21 +73,24 @@ https://your-tunnel-host.example.com/mcp
 
 Run:
 
-```bash
-npx auvrynt start
+```powershell
+auvrynt start
 ```
 
-If your tunnel URL changes for one run, override it without rewriting config:
+The command starts in the background and returns only after both the local
+server and Cloudflare tunnel are ready. It always limits web-agent file access
+to the directory where you ran it.
 
-```bash
-AUVRYNT_PUBLIC_BASE_URL="https://new-tunnel.example.com" npx auvrynt start
-```
+Use `auvrynt add web` (or another profile) to update the running instance
+without restarting the server or tunnel. Use `auvrynt stop` to stop both
+managed processes.
 
-For a stable public URL, persist it:
+For an independently managed stable URL, configure it and use foreground
+`auvrynt serve`:
 
-```bash
-npx auvrynt config set publicBaseUrl https://auvrynt.example.com
-npx auvrynt start
+```powershell
+auvrynt config set publicBaseUrl https://auvrynt.example.com
+auvrynt serve
 ```
 
 ## Approve The Client
