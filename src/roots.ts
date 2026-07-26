@@ -32,7 +32,10 @@ export function isPathInsideRoot(path: string, root: string): boolean {
 export function assertAllowedPath(path: string, allowedRoots: string[]): string {
   const resolvedPath = canonicalizePath(path);
   if (allowedRoots.some((root) => isPathInsideRoot(resolvedPath, root))) {
-    return resolve(expandHomePath(path));
+    // Return the canonical path that was actually authorized rather than the
+    // original symlink/junction spelling. This narrows the time-of-check /
+    // time-of-use window for callers that subsequently open or mutate it.
+    return resolvedPath;
   }
 
   throw new AccessDeniedError(`Path is outside allowed roots: ${path}`);

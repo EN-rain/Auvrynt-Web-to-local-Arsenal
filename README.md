@@ -1,5 +1,9 @@
 
 
+<p align="center">
+  <img src="docs/assets/auvrynt-icon.png" alt="Auvrynt icon" width="112" height="112" />
+</p>
+
 <h1 align="center">Auvrynt — Web-to-local Arsenal</h1>
 
 <p align="center">
@@ -109,13 +113,13 @@ Paste your `/mcp` URL into your AI client (ChatGPT, Claude, etc.):
 https://your-tunnel.trycloudflare.com/mcp
 ```
 
-When the client connects, you will be prompted to approve the session using the **Owner password** shown at startup. The password is also stored in:
+When the client connects, Auvrynt opens a local approval page that requires your **Owner token**. Normal startup keeps that secret hidden; retrieve it only when needed with:
 
-```
-~/.auvrynt/auth.json
+```bash
+auvrynt token
 ```
 
-Keep it private.
+It is stored locally in `~/.auvrynt/auth.json`. Keep it private and do not paste it into the MCP client itself.
 
 ---
 
@@ -127,7 +131,8 @@ Keep it private.
 | `auvrynt start` | Start a Cloudflare tunnel scoped to the current directory |
 | `auvrynt serve` | Start the server with verbose log output |
 | `auvrynt doctor` | Show your config, Node version, and dependency health |
-| `auvrynt status` | Show local MCP, Blender, Godot, Cloudflare Tunnel, and Serena status |
+| `auvrynt status` | Show local MCP and integration status without modifying integration files |
+| `auvrynt token` | Print the Owner token only on explicit local request |
 | `auvrynt connected` | Show recently observed ChatGPT, Kimi, Claude, or other MCP providers |
 | `auvrynt uninstall` | Remove Auvrynt configuration after confirmation |
 | `auvrynt uninstall -y` | Remove Auvrynt configuration without confirmation |
@@ -194,7 +199,7 @@ Config files are stored in `~/.auvrynt/`:
 
 ```
 ~/.auvrynt/config.json   ← ports, roots, public URL
-~/.auvrynt/auth.json     ← owner password (keep private)
+~/.auvrynt/auth.json     ← owner token (keep private)
 ```
 
 Key environment variables:
@@ -203,7 +208,7 @@ Key environment variables:
 |---|---|
 | `AUVRYNT_ALLOWED_ROOTS` | Comma-separated project root paths |
 | `AUVRYNT_PUBLIC_BASE_URL` | Your public tunnel origin (no `/mcp`) |
-| `AUVRYNT_OAUTH_OWNER_TOKEN` | Override the owner password directly |
+| `AUVRYNT_OAUTH_OWNER_TOKEN` | Override the owner token directly |
 | `AUVRYNT_LOG_FORMAT` | `json` (default) or `pretty` |
 
 See [Configuration Reference](docs/configuration.md) for all options.

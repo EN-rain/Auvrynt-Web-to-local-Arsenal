@@ -61,6 +61,8 @@ export interface OpenWorkspaceInput {
   baseRef?: string;
 }
 
+const MAX_ACTIVE_WORKSPACES = 128;
+
 export class WorkspaceRegistry {
   private readonly workspaces = new Map<string, Workspace>();
 
@@ -70,6 +72,9 @@ export class WorkspaceRegistry {
   ) {}
 
   async openWorkspace(input: string | OpenWorkspaceInput): Promise<WorkspaceContext> {
+    if (this.workspaces.size >= MAX_ACTIVE_WORKSPACES) {
+      throw new Error(`Workspace capacity reached (max ${MAX_ACTIVE_WORKSPACES} active workspaces). Restart Auvrynt to clear inactive in-memory sessions.`);
+    }
     const options = typeof input === "string" ? { path: input } : input;
     const mode = options.mode ?? "checkout";
 
@@ -93,6 +98,10 @@ export class WorkspaceRegistry {
     }
 
     const root = this.assertWorkspaceRootAllowed(session.root, session.mode, session.sourceRoot);
+    if (this.workspaces.size >= MAX_ACTIVE_WORKSPACES) {
+      throw new Error(`Workspace capacity reached (max ${MAX_ACTIVE_WORKSPACES} active workspaces).`);
+    }
+
     const restoredWorkspace: Workspace = {
       id: session.id,
       root,
@@ -265,6 +274,7 @@ export class WorkspaceRegistry {
       if (!entry.isFile()) return;
       if (!CONTEXT_FILE_NAMES.has(entry.name)) return;
       if (loadedPaths.has(path)) return;
+      if (discovered.length >= MAX_DISCOVERED_CONTEXT_FILES) return;
 
       discovered.push({ path });
     });
@@ -274,6 +284,9 @@ export class WorkspaceRegistry {
 }
 
 const CONTEXT_FILE_NAMES = new Set(["AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"]);
+const MAX_CONTEXT_SCAN_ENTRIES = 50_000;
+const MAX_CONTEXT_SCAN_DEPTH = 16;
+const MAX_DISCOVERED_CONTEXT_FILES = 256;
 const SKIPPED_CONTEXT_DIRS = new Set([
   ".git",
   ".hg",
@@ -306,7 +319,11 @@ export function formatAgentsPath(path: string, workspaceRoot: string | undefined
 async function walkWorkspace(
   directory: string,
   visit: (path: string, entry: { name: string; isFile(): boolean; isDirectory(): boolean }) => Promise<void> | void,
+  state: { entries: number; stopped: boolean } = { entries: 0, stopped: false },
+  depth = 0,
 ): Promise<void> {
+  if (state.stopped || depth > MAX_CONTEXT_SCAN_DEPTH) return;
+
   let entries;
   try {
     entries = await opendir(directory);
@@ -315,10 +332,17 @@ async function walkWorkspace(
   }
 
   for await (const entry of entries) {
+    if (state.stopped) break;
+    state.entries += 1;
+    if (state.entries > MAX_CONTEXT_SCAN_ENTRIES) {
+      state.stopped = true;
+      break;
+    }
+
     const path = join(directory, entry.name);
     if (entry.isDirectory()) {
       if (!SKIPPED_CONTEXT_DIRS.has(entry.name)) {
-        await walkWorkspace(path, visit);
+        await walkWorkspace(path, visit, state, depth + 1);
       }
       continue;
     }

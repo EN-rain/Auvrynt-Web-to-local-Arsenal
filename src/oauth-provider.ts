@@ -26,7 +26,6 @@ interface AuthorizationCodeRecord {
 }
 
 interface AccessTokenRecord {
-  token: string;
   clientId: string;
   scopes: string[];
   expiresAt: number;
@@ -34,7 +33,6 @@ interface AccessTokenRecord {
 }
 
 interface RefreshTokenRecord {
-  token: string;
   clientId: string;
   scopes: string[];
   expiresAt: number;
@@ -42,6 +40,10 @@ interface RefreshTokenRecord {
 }
 
 const CODE_TTL_MS = 5 * 60 * 1000;
+const MAX_DYNAMIC_CLIENTS = 128;
+const MAX_AUTHORIZATION_CODES = 256;
+const MAX_ACCESS_TOKENS = 2048;
+const MAX_REFRESH_TOKENS = 2048;
 
 function randomToken(): string {
   return randomBytes(32).toString("base64url");
@@ -69,15 +71,17 @@ function formHtml(params: {
   scopes: string[];
   resource?: URL;
   fields: Record<string, string | undefined>;
+  nonce: string;
 }): string {
   const scopeDescriptions: Record<string, string> = {
     "auvrynt:read": "Inspect files, search, and perform read-only project analysis",
     "auvrynt:write": "Edit and create files",
-    "auvrynt:process": "Start and stop approved workspace processes",
+    "auvrynt:process": "Run local commands and processes with the current OS user's privileges",
     "auvrynt:web": "Use browser and web-development tools",
     "auvrynt:software": "Use software and .NET tools",
-    "auvrynt:godot": "Use Godot project tools",
-    "auvrynt:blender": "Use Blender 3D tools",
+    "auvrynt:godot": "Use Godot project and editor tools",
+    "auvrynt:blender": "Use workspace-bound Blender 3D tools",
+    "auvrynt:blender-python": "Execute arbitrary Python inside Blender (host-level capability)",
     "auvrynt:serena": "Use local Serena semantic code tools",
   };
   const scopeItems = params.scopes.length > 0
@@ -86,9 +90,12 @@ function formHtml(params: {
         return `<li><strong>${htmlEscape(s)}</strong>${desc ? ` <span>${htmlEscape(desc)}</span>` : ""}</li>`;
       }).join("\n          ")
     : "<li><strong>auvrynt</strong><span>General access</span></li>";
-  const resourceText = params.resource?.href ?? "Auvrynt Webkit Arsenal endpoint";
   const error = params.error
     ? `<output role="alert" class="error">${htmlEscape(params.error)}</output>`
+    : "";
+  const privilegedScopes = params.scopes.filter((scope) => scope === "auvrynt:process" || scope === "auvrynt:blender-python");
+  const privilegeNote = privilegedScopes.length > 0
+    ? `<p class="privilege-note"><strong>Local execution requested.</strong> These permissions can run code with your OS user privileges. Approve only for a web agent you trust.</p>`
     : "";
   const hiddenFields = Object.entries(params.fields)
     .filter((entry): entry is [string, string] => entry[1] !== undefined)
@@ -101,74 +108,50 @@ function formHtml(params: {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Auvrynt: Webkit Arsenal</title>
-    <style>
+    <style nonce="${htmlEscape(params.nonce)}">
       *, *::before, *::after { box-sizing: border-box; }
       :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      body { margin: 0; min-height: 100vh; background: #080b10; color: #f4f7fb; display: grid; place-items: center; padding: 24px; }
-      main { width: min(100%, 960px); display: grid; grid-template-columns: .82fr 1.18fr; overflow: hidden; background: #10151d; border: 1px solid #273241; border-radius: 18px; box-shadow: 0 28px 90px rgba(0,0,0,.42); }
-      .identity { padding: 44px 38px; background: #0c1118; border-right: 1px solid #273241; display: flex; flex-direction: column; justify-content: space-between; min-height: 620px; }
-      .mark { display: inline-flex; align-items: center; gap: 10px; color: #a9b8c9; font-size: 12px; font-weight: 750; letter-spacing: .14em; text-transform: uppercase; }
-      .mark-icon { width: 26px; height: 26px; display: grid; place-items: center; border: 1px solid #64748b; color: #b8f36b; border-radius: 7px; font-size: 13px; }
-      .identity h1 { max-width: 310px; margin: 56px 0 16px; font-size: clamp(34px, 4vw, 52px); line-height: .98; letter-spacing: -.055em; font-weight: 760; }
-      .identity h1 span { color: #b8f36b; }
-      .identity-copy { max-width: 310px; margin: 0; color: #8e9bad; font-size: 15px; line-height: 1.65; }
-      .connection-meta { display: grid; gap: 14px; margin-top: 36px; }
-      .meta-row { display: flex; justify-content: space-between; gap: 16px; padding-top: 12px; border-top: 1px solid #273241; color: #778598; font-size: 12px; }
-      .meta-row strong { color: #d7e0eb; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
-      .status { display: inline-flex; align-items: center; gap: 7px; color: #b8f36b; font-weight: 650; }
-      .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #b8f36b; box-shadow: 0 0 0 3px rgba(184,243,107,.12); }
-      .identity-footer { color: #617084; font-size: 11px; line-height: 1.5; }
-      .form-panel { padding: 44px 48px; }
-      .eyebrow { margin: 0 0 12px; color: #b8f36b; font-size: 11px; font-weight: 750; letter-spacing: .14em; text-transform: uppercase; }
-      .form-panel h2 { margin: 0 0 10px; font-size: 28px; line-height: 1.1; letter-spacing: -.035em; }
-      .intro { max-width: 520px; margin: 0 0 28px; color: #9ba8b8; font-size: 15px; line-height: 1.6; }
-      .client-badge { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 24px; padding: 8px 11px; border: 1px solid #344153; border-radius: 8px; color: #dce6f1; background: #171e28; font-size: 13px; }
-      .client-badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #b8f36b; }
-      .section-label { margin: 0 0 10px; color: #718095; font-size: 11px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
-      .scope-list { list-style: none; padding: 0; margin: 0 0 28px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-      .scope-list li { min-height: 68px; padding: 12px 13px; border: 1px solid #2b3747; border-radius: 10px; background: #141b24; color: #8e9bad; font-size: 12px; line-height: 1.45; }
-      .scope-list li strong { display: block; margin-bottom: 4px; color: #f1f5f9; font-size: 13px; font-weight: 650; }
-      .token-group { margin-bottom: 22px; }
-      .token-group label { display: block; margin-bottom: 8px; color: #dce6f1; font-size: 13px; font-weight: 650; }
+      html, body { height: 100%; }
+      body { margin: 0; height: 100dvh; overflow: hidden; background: radial-gradient(circle at 20% 0%, rgba(168,85,247,.20), transparent 36%), linear-gradient(135deg, #11051f, #1e0b36 52%, #0b0714); color: #fbf7ff; display: flex; align-items: center; justify-content: center; }
+      main { width: min(100%, 760px); max-height: 100dvh; overflow: hidden; }
+      .form-panel { padding: clamp(18px, 4vh, 42px) clamp(20px, 5vw, 52px); }
+      .brand-icon { width: 52px; height: 52px; display: block; margin: 0 0 14px; border-radius: 12px; object-fit: cover; }
+      .eyebrow { margin: 0 0 7px; color: #d8b4fe; font-size: 10px; font-weight: 750; letter-spacing: .14em; text-transform: uppercase; }
+      .form-panel h2 { margin: 0 0 7px; font-size: clamp(26px, 4vh, 34px); line-height: 1.05; letter-spacing: -.045em; }
+      .intro { max-width: 660px; margin: 0 0 12px; color: #c4b5fd; font-size: 14px; line-height: 1.45; }
+      .client-badge { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 12px; color: #f3e8ff; font-size: 13px; font-weight: 650; }
+      .client-badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #c084fc; }
+      .section-label { margin: 0 0 5px; color: #a78bfa; font-size: 10px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
+      .scope-list { list-style: none; padding: 0; margin: 0 0 12px; display: flex; flex-wrap: wrap; column-gap: 22px; row-gap: 3px; }
+      .scope-list li { flex: 1 1 46%; min-width: 260px; padding: 2px 0; color: #c4b5fd; font-size: 11px; line-height: 1.3; }
+      .scope-list li strong { color: #fff7ff; font-size: 11px; font-weight: 700; }
+      .token-group { margin-bottom: 12px; }
+      .token-group label { display: block; margin-bottom: 5px; color: #dce6f1; font-size: 12px; font-weight: 650; }
       .input-wrapper { position: relative; }
-      .input-wrapper input { width: 100%; padding: 13px 58px 13px 14px; border: 1px solid #3a485a; border-radius: 9px; background: #0c1118; color: #f4f7fb; font: inherit; font-size: 15px; outline: none; transition: border-color .18s, box-shadow .18s; }
-      .input-wrapper input:focus { border-color: #b8f36b; box-shadow: 0 0 0 3px rgba(184,243,107,.14); }
+      .input-wrapper input { width: 100%; padding: 11px 58px 11px 12px; border: 1px solid rgba(216,180,254,.35); border-radius: 8px; background: rgba(12, 6, 24, .72); color: #fbf7ff; font: inherit; font-size: 14px; outline: none; }
+      .input-wrapper input:focus { border-color: #c084fc; box-shadow: 0 0 0 2px rgba(192,132,252,.20); }
       .input-wrapper input::placeholder { color: #657388; }
-      .toggle-vis { position: absolute; right: 5px; top: 50%; transform: translateY(-50%); border: 0; border-radius: 6px; padding: 7px 9px; background: transparent; color: #9ba8b8; cursor: pointer; font-size: 12px; font-weight: 650; }
-      .toggle-vis:hover { color: #b8f36b; background: #1b2632; }
-      .button-group { display: flex; gap: 10px; }
-      .button-group button { flex: 1; min-height: 46px; border-radius: 9px; padding: 12px 14px; font: inherit; font-size: 14px; font-weight: 750; cursor: pointer; transition: transform .18s, background .18s, border-color .18s; }
-      .button-group button:hover { transform: translateY(-1px); }
-      .button-group button:focus-visible, .toggle-vis:focus-visible { outline: 2px solid #b8f36b; outline-offset: 3px; }
-      .btn-approve { border: 1px solid #b8f36b; color: #10150c; background: #b8f36b; }
-      .btn-approve:hover { background: #c8fa89; }
-      .btn-deny { border: 1px solid #3a485a; color: #dce6f1; background: transparent; }
-      .btn-deny:hover { border-color: #718095; background: #171e28; }
-      .error { display: block; margin: 0 0 20px; padding: 12px 14px; border: 1px solid #b45555; border-radius: 9px; color: #ffd1d1; background: #321a1e; font-size: 13px; line-height: 1.45; }
-      .security-note { display: flex; gap: 8px; margin: 22px 0 0; color: #718095; font-size: 12px; line-height: 1.5; }
-      .security-note::before { content: "✓"; color: #b8f36b; font-weight: 800; }
-      @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } .button-group button:hover { transform: none; } }
-      @media (max-width: 720px) { body { padding: 12px; place-items: start center; } main { grid-template-columns: 1fr; } .identity { min-height: auto; padding: 28px 24px; border-right: 0; border-bottom: 1px solid #273241; } .identity h1 { margin: 34px 0 12px; font-size: 40px; } .identity-copy { max-width: 520px; } .connection-meta { margin-top: 24px; } .identity-footer { display: none; } .form-panel { padding: 28px 24px 32px; } }
-      @media (max-width: 480px) { .scope-list { grid-template-columns: 1fr; } .button-group { flex-direction: column-reverse; } }
+      .toggle-vis { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); border: 0; padding: 6px 9px; background: transparent; color: #a7a0b3; cursor: pointer; font-size: 11px; font-weight: 650; }
+      .toggle-vis:hover { color: #f3e8ff; }
+      .button-group { display: flex; gap: 8px; }
+      .button-group button { flex: 1; min-height: 42px; border-radius: 7px; padding: 10px 12px; font: inherit; font-size: 13px; font-weight: 750; cursor: pointer; }
+      .button-group button:focus-visible, .toggle-vis:focus-visible { outline: 2px solid #c084fc; outline-offset: 2px; }
+      .btn-approve { border: 1px solid #c084fc; color: #1e0b36; background: linear-gradient(135deg, #e9d5ff, #c084fc); }
+      .btn-deny { border: 1px solid rgba(216,180,254,.35); color: #f3e8ff; background: transparent; }
+      .error { display: block; margin: 0 0 10px; color: #ffb4b4; font-size: 12px; line-height: 1.35; }
+      .privilege-note { margin: -2px 0 10px; color: #e9d5ff; font-size: 11px; line-height: 1.35; }
+      .privilege-note strong { color: #f5d0fe; }
+      .security-note { display: flex; gap: 7px; margin: 10px 0 0; color: #a78bfa; font-size: 11px; line-height: 1.35; }
+      .security-note::before { content: "✓"; color: #c084fc; font-weight: 800; }
+      @media (max-width: 620px) { body { align-items: flex-start; } .form-panel { padding: 14px 18px; } .scope-list li { min-width: 100%; } }
+      @media (max-height: 680px) { .brand-icon { width: 40px; height: 40px; margin-bottom: 8px; } .intro, .client-badge, .scope-list { margin-bottom: 8px; } .scope-list li { font-size: 10px; padding: 0; } .form-panel h2 { font-size: 26px; } }
       .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
     </style>
   </head>
   <body>
-    <main role="main">
-      <section class="identity" aria-label="Auvrynt connection details">
-        <div>
-          <div class="mark"><span class="mark-icon" aria-hidden="true">A</span> Auvrynt</div>
-          <h1>Local power.<br /><span>Explicit access.</span></h1>
-          <p class="identity-copy">Auvrynt keeps your development workspace local while giving your web agent a controlled MCP connection.</p>
-          <div class="connection-meta" aria-label="Connection summary">
-            <div class="meta-row"><span>Requesting agent</span><strong>${htmlEscape(params.clientName)}</strong></div>
-            <div class="meta-row"><span>Connection state</span><strong class="status">Awaiting approval</strong></div>
-            <div class="meta-row"><span>Permissions</span><strong>${params.scopes.length} requested</strong></div>
-          </div>
-        </div>
-        <p class="identity-footer">Review every permission before continuing. You can deny this request without changing your workspace.</p>
-      </section>
-      <section class="form-panel" aria-labelledby="authorize-title">
+    <main role="main" aria-labelledby="authorize-title">
+      <section class="form-panel">
+        <img class="brand-icon" src="/brand-assets/auvrynt-icon.png" alt="Auvrynt" width="64" height="64" />
         <p class="eyebrow">Secure handshake</p>
         <h2 id="authorize-title">Approve this connection</h2>
         <p class="intro">Review what the web agent can do in your workspace, then confirm with your local owner token.</p>
@@ -178,6 +161,7 @@ function formHtml(params: {
         <ul class="scope-list" aria-label="Requested permissions">
           ${scopeItems}
         </ul>
+        ${privilegeNote}
         <form method="post" aria-describedby="token-desc">
           <div class="token-group">
             <label for="owner_token">Local owner token</label>
@@ -196,7 +180,7 @@ ${hiddenFields}
         <p class="security-note">Your owner token is validated locally. It is never sent to the web agent, stored in cookies, or written to logs.</p>
       </section>
     </main>
-    <script nonce="${randomUUID()}">
+    <script nonce="${htmlEscape(params.nonce)}">
       (function() {
         var btn = document.querySelector('.toggle-vis');
         var input = document.getElementById('owner_token');
@@ -207,16 +191,6 @@ ${hiddenFields}
             btn.textContent = isPassword ? 'Hide' : 'Show';
             btn.setAttribute('aria-label', isPassword ? 'Hide owner token' : 'Show owner token');
             input.setAttribute('aria-live', 'polite');
-          });
-        }
-        var form = document.querySelector('form');
-        var denyBtn = document.querySelector('button[name="denied"]');
-        if (form && denyBtn) {
-          denyBtn.addEventListener('click', function(e) {
-            e.preventDefault();
-            var redirect = new URL(window.location.href);
-            redirect.searchParams.set('error', 'access_denied');
-            window.location.href = redirect.href;
           });
         }
       })();
@@ -237,8 +211,38 @@ function redirectHostAllowed(redirectUri: string, allowedHosts: string[]): boole
     return false;
   }
 
-  if (["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname)) return true;
-  return allowedHosts.includes(parsed.hostname);
+  const hostname = parsed.hostname.toLowerCase();
+  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(hostname);
+  if (loopback) return parsed.protocol === "http:" || parsed.protocol === "https:";
+  return parsed.protocol === "https:" && allowedHosts.some((host) => host.toLowerCase() === hostname);
+}
+
+function authorizationNonce(): string {
+  return randomBytes(18).toString("base64url");
+}
+
+function setAuthorizationSecurityHeaders(res: Response, nonce: string): void {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
+  res.setHeader(
+    "Content-Security-Policy",
+    `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`,
+  );
+}
+
+function sendAuthorizationForm(
+  res: Response,
+  params: Omit<Parameters<typeof formHtml>[0], "nonce">,
+  status: number,
+): void {
+  const nonce = authorizationNonce();
+  setAuthorizationSecurityHeaders(res, nonce);
+  res.status(status).setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(formHtml({ ...params, nonce }));
 }
 
 export class InMemoryOAuthClientsStore implements OAuthRegisteredClientsStore {
@@ -253,6 +257,9 @@ export class InMemoryOAuthClientsStore implements OAuthRegisteredClientsStore {
   registerClient(
     client: Omit<OAuthClientInformationFull, "client_id" | "client_id_issued_at">,
   ): OAuthClientInformationFull {
+    if (this.clients.size >= MAX_DYNAMIC_CLIENTS) {
+      throw new InvalidRequestError("Dynamic OAuth client capacity reached. Restart Auvrynt to clear stale registrations.");
+    }
     if (!client.redirect_uris.every((uri) => redirectHostAllowed(uri, this.allowedRedirectHosts))) {
       throw new InvalidRequestError("Client redirect_uri is not allowed for this Auvrynt server");
     }
@@ -306,15 +313,12 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     }
 
     if (req.method !== "POST") {
-      res.status(200).setHeader("Content-Type", "text/html; charset=utf-8");
-      res.send(
-        formHtml({
-          clientName: client.client_name ?? client.client_id,
-          scopes: params.scopes ?? this.config.scopes,
-          resource: params.resource,
-          fields: authorizationFormFields(client, params),
-        }),
-      );
+      sendAuthorizationForm(res, {
+        clientName: client.client_name ?? client.client_id,
+        scopes: params.scopes ?? this.config.scopes,
+        resource: params.resource,
+        fields: authorizationFormFields(client, params),
+      }, 200);
       return;
     }
 
@@ -324,19 +328,20 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
 
     const providedToken = String(req.body?.owner_token ?? "");
     if (!safeEquals(providedToken, this.config.ownerToken)) {
-      res.status(401).setHeader("Content-Type", "text/html; charset=utf-8");
-      res.send(
-        formHtml({
-          error: "The owner password was not accepted.",
-          clientName: client.client_name ?? client.client_id,
-          scopes: params.scopes ?? this.config.scopes,
-          resource: params.resource,
-          fields: authorizationFormFields(client, params),
-        }),
-      );
+      sendAuthorizationForm(res, {
+        error: "The owner token was not accepted.",
+        clientName: client.client_name ?? client.client_id,
+        scopes: params.scopes ?? this.config.scopes,
+        resource: params.resource,
+        fields: authorizationFormFields(client, params),
+      }, 401);
       return;
     }
 
+    this.pruneExpired();
+    if (this.codes.size >= MAX_AUTHORIZATION_CODES) {
+      throw new InvalidRequestError("Too many pending authorization requests. Try again after older requests expire.");
+    }
     const code = `code-${randomUUID()}`;
     this.codes.set(code, {
       clientId: client.client_id,
@@ -401,6 +406,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
   }
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
+    this.pruneExpired();
     const record = this.accessTokens.get(hashToken(token));
     if (!record || record.expiresAt < Math.floor(Date.now() / 1000)) {
       throw new InvalidTokenError("Invalid or expired access token");
@@ -433,6 +439,11 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
   }
 
   private issueTokens(clientId: string, scopes: string[], resource?: URL): OAuthTokens {
+    this.pruneExpired();
+    if (this.accessTokens.size >= MAX_ACCESS_TOKENS || this.refreshTokens.size >= MAX_REFRESH_TOKENS) {
+      throw new InvalidGrantError("OAuth token capacity reached. Revoke stale clients or restart Auvrynt.");
+    }
+
     const now = Math.floor(Date.now() / 1000);
     const accessToken = randomToken();
     const refreshToken = randomToken();
@@ -440,14 +451,12 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     const refreshExpiresAt = now + this.config.refreshTokenTtlSeconds;
 
     this.accessTokens.set(hashToken(accessToken), {
-      token: accessToken,
       clientId,
       scopes,
       expiresAt: accessExpiresAt,
       resource,
     });
     this.refreshTokens.set(hashToken(refreshToken), {
-      token: refreshToken,
       clientId,
       scopes,
       expiresAt: refreshExpiresAt,
@@ -461,6 +470,20 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
       refresh_token: refreshToken,
       scope: scopes.join(" "),
     };
+  }
+
+  private pruneExpired(): void {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const nowMs = Date.now();
+    for (const [code, record] of this.codes) {
+      if (record.expiresAtMs < nowMs) this.codes.delete(code);
+    }
+    for (const [tokenHash, record] of this.accessTokens) {
+      if (record.expiresAt < nowSeconds) this.accessTokens.delete(tokenHash);
+    }
+    for (const [tokenHash, record] of this.refreshTokens) {
+      if (record.expiresAt < nowSeconds) this.refreshTokens.delete(tokenHash);
+    }
   }
 }
 

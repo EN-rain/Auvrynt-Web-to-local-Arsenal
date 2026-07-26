@@ -1,13 +1,21 @@
 import { randomUUID } from "node:crypto";
-import { spawn, type ChildProcess } from "node:child_process";
-import { execFile } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
-import type { WorkspaceRegistry, Workspace } from "./workspaces.js";
+import type { WorkspaceRegistry } from "./workspaces.js";
 
 const execFileAsync = promisify(execFile);
 
-const SECRET_KEYWORD_REGEX = /(TOKEN|SECRET|PASSWORD|KEY|CONNECTION_STRING)/i;
+const SECRET_KEYWORD_REGEX = /(TOKEN|SECRET|PASSWORD|PASSWD|PWD|KEY|CONNECTION_STRING|DATABASE_URL|AUTH|COOKIE|CREDENTIAL)/i;
 const URL_REGEX = /https?:\/\/(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(:\d+)?(\/[^\s]*)?/gi;
+const MAX_RUNNING_PROCESSES = 24;
+const MAX_RUNNING_PROCESSES_PER_WORKSPACE = 8;
+const MAX_TRACKED_PROCESSES = 128;
+const MAX_LOG_LINES = 1000;
+const MAX_LOG_BYTES_PER_STREAM = 512 * 1024;
+const MAX_LOG_LINE_CHARS = 16 * 1024;
+const MAX_COMMAND_CHARS = 16 * 1024;
+const MAX_ENV_OVERRIDES = 64;
+const MAX_ENV_VALUE_CHARS = 32 * 1024;
 
 function secretValues(environment?: Record<string, string>): string[] {
   return Object.entries({ ...process.env, ...(environment ?? {}) })
@@ -17,7 +25,27 @@ function secretValues(environment?: Record<string, string>): string[] {
 }
 
 export function redactProcessText(text: string, environment?: Record<string, string>): string {
-  return secretValues(environment).reduce((result, secret) => result.split(secret).join("[REDACTED]"), text);
+  let redacted = secretValues(environment).reduce(
+    (result, secret) => result.split(secret).join("[REDACTED]"),
+    text,
+  );
+  redacted = redacted.replace(
+    /\b(authorization\s*:\s*bearer\s+)[^\s]+/gi,
+    "$1[REDACTED]",
+  );
+  redacted = redacted.replace(
+    /\b((?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|passwd|pwd|cookie|credential|database[_-]?url|connection[_-]?string|auth)\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s&;]+)/gi,
+    "$1[REDACTED]",
+  );
+  redacted = redacted.replace(
+    /(--(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|passwd|pwd|cookie|credential)\s+)("[^"]*"|'[^']*'|[^\s]+)/gi,
+    "$1[REDACTED]",
+  );
+  redacted = redacted.replace(
+    /\b([a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:)[^\s/@]+@/gi,
+    "$1[REDACTED]@",
+  );
+  return redacted;
 }
 
 export interface TrackedProcess {
@@ -33,6 +61,9 @@ export interface TrackedProcess {
   stdoutLogs: string[];
   stderrLogs: string[];
   combinedLogs: string[];
+  stdoutLogBytes: number;
+  stderrLogBytes: number;
+  combinedLogBytes: number;
   detectedUrls: Set<string>;
   maxLogLines: number;
 }
@@ -66,13 +97,34 @@ export function sanitizeEnv(env?: Record<string, string>): Record<string, string
   if (!env) return {};
   const sanitized: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
-    if (SECRET_KEYWORD_REGEX.test(key)) {
-      sanitized[key] = "[REDACTED]";
-    } else {
-      sanitized[key] = value;
-    }
+    sanitized[key] = SECRET_KEYWORD_REGEX.test(key) ? "[REDACTED]" : value;
   }
   return sanitized;
+}
+
+function validateEnvironment(environment?: Record<string, string>): void {
+  if (!environment) return;
+  const entries = Object.entries(environment);
+  if (entries.length > MAX_ENV_OVERRIDES) {
+    throw new Error(`Too many environment overrides (max ${MAX_ENV_OVERRIDES}).`);
+  }
+  for (const [key, value] of entries) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      throw new Error(`Invalid environment variable name: ${key}`);
+    }
+    if (value.length > MAX_ENV_VALUE_CHARS) {
+      throw new Error(`Environment variable ${key} exceeds ${MAX_ENV_VALUE_CHARS} characters.`);
+    }
+  }
+}
+
+function isPidRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export class ProcessManager {
@@ -87,27 +139,42 @@ export class ProcessManager {
     detectedUrls: string[];
     recentOutput: string[];
   } {
+    const command = input.command.trim();
+    if (!command) throw new Error("Process command must not be empty.");
+    if (command.length > MAX_COMMAND_CHARS) {
+      throw new Error(`Process command exceeds ${MAX_COMMAND_CHARS} characters.`);
+    }
+    validateEnvironment(input.environment);
+    this.pruneHistory();
+
+    const running = Array.from(this.processes.values()).filter((tracked) => tracked.status === "running");
+    if (running.length >= MAX_RUNNING_PROCESSES) {
+      throw new Error(`Process capacity reached (max ${MAX_RUNNING_PROCESSES} running processes).`);
+    }
+    const workspaceRunning = running.filter((tracked) => tracked.workspaceId === input.workspaceId).length;
+    if (workspaceRunning >= MAX_RUNNING_PROCESSES_PER_WORKSPACE) {
+      throw new Error(
+        `Workspace process capacity reached (max ${MAX_RUNNING_PROCESSES_PER_WORKSPACE} running processes).`,
+      );
+    }
+
     const workspace = this.registry.getWorkspace(input.workspaceId);
     const cwd = this.registry.resolveWorkingDirectory(workspace, input.workingDirectory);
-
     const processId = `proc_${randomUUID()}`;
-    const maxLogLines = 1000;
-
     const childEnv = { ...process.env, ...(input.environment ?? {}) };
     const redactionEnvironment = input.environment;
-
     const useShell = input.useShell ?? true;
-    const child = spawn(input.command, {
+    const child = spawn(command, {
       cwd,
       env: childEnv,
       shell: useShell,
-      detached: false,
+      detached: process.platform !== "win32",
     });
 
     const tracked: TrackedProcess = {
       id: processId,
       workspaceId: input.workspaceId,
-      command: input.command,
+      command: redactProcessText(command, redactionEnvironment),
       workingDirectory: cwd,
       startTime: new Date().toISOString(),
       child,
@@ -116,52 +183,68 @@ export class ProcessManager {
       stdoutLogs: [],
       stderrLogs: [],
       combinedLogs: [],
+      stdoutLogBytes: 0,
+      stderrLogBytes: 0,
+      combinedLogBytes: 0,
       detectedUrls: new Set<string>(),
-      maxLogLines,
+      maxLogLines: MAX_LOG_LINES,
+    };
+
+    let stdoutBuffer = "";
+    let stderrBuffer = "";
+
+    const appendArray = (lines: string[], value: string, byteField: "stdoutLogBytes" | "stderrLogBytes" | "combinedLogBytes") => {
+      lines.push(value);
+      tracked[byteField] += Buffer.byteLength(value, "utf8");
+      while (lines.length > MAX_LOG_LINES || tracked[byteField] > MAX_LOG_BYTES_PER_STREAM) {
+        const removed = lines.shift();
+        if (removed === undefined) break;
+        tracked[byteField] -= Buffer.byteLength(removed, "utf8");
+      }
     };
 
     const appendLog = (line: string, stream: "stdout" | "stderr") => {
-      const trimmed = redactProcessText(line.trimEnd(), redactionEnvironment);
+      const limited = line.length > MAX_LOG_LINE_CHARS
+        ? `${line.slice(0, MAX_LOG_LINE_CHARS)}… [truncated]`
+        : line;
+      const trimmed = redactProcessText(limited.trimEnd(), redactionEnvironment);
       if (!trimmed) return;
 
       const matches = trimmed.match(URL_REGEX);
       if (matches) {
-        for (const match of matches) {
-          tracked.detectedUrls.add(match);
-        }
+        for (const match of matches) tracked.detectedUrls.add(match);
       }
 
-      const formatted = `[${stream}] ${trimmed}`;
-      tracked.combinedLogs.push(formatted);
-      if (stream === "stdout") tracked.stdoutLogs.push(trimmed);
-      if (stream === "stderr") tracked.stderrLogs.push(trimmed);
-
-      if (tracked.combinedLogs.length > maxLogLines) {
-        tracked.combinedLogs.shift();
-      }
-      if (tracked.stdoutLogs.length > maxLogLines) {
-        tracked.stdoutLogs.shift();
-      }
-      if (tracked.stderrLogs.length > maxLogLines) {
-        tracked.stderrLogs.shift();
-      }
+      appendArray(tracked.combinedLogs, `[${stream}] ${trimmed}`, "combinedLogBytes");
+      if (stream === "stdout") appendArray(tracked.stdoutLogs, trimmed, "stdoutLogBytes");
+      else appendArray(tracked.stderrLogs, trimmed, "stderrLogBytes");
     };
 
-    child.stdout?.on("data", (data: Buffer) => {
-      const text = data.toString("utf8");
-      for (const line of text.split(/\r?\n/)) {
-        appendLog(line, "stdout");
+    const consumeChunk = (chunk: Buffer, stream: "stdout" | "stderr") => {
+      let buffer = (stream === "stdout" ? stdoutBuffer : stderrBuffer) + chunk.toString("utf8");
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? "";
+      for (const line of lines) appendLog(line, stream);
+      if (buffer.length > MAX_LOG_LINE_CHARS * 2) {
+        appendLog(buffer.slice(0, MAX_LOG_LINE_CHARS), stream);
+        buffer = buffer.slice(MAX_LOG_LINE_CHARS);
       }
-    });
+      if (stream === "stdout") stdoutBuffer = buffer;
+      else stderrBuffer = buffer;
+    };
 
-    child.stderr?.on("data", (data: Buffer) => {
-      const text = data.toString("utf8");
-      for (const line of text.split(/\r?\n/)) {
-        appendLog(line, "stderr");
-      }
-    });
+    const flushBuffers = () => {
+      if (stdoutBuffer) appendLog(stdoutBuffer, "stdout");
+      if (stderrBuffer) appendLog(stderrBuffer, "stderr");
+      stdoutBuffer = "";
+      stderrBuffer = "";
+    };
+
+    child.stdout?.on("data", (data: Buffer) => consumeChunk(data, "stdout"));
+    child.stderr?.on("data", (data: Buffer) => consumeChunk(data, "stderr"));
 
     child.on("exit", (code) => {
+      flushBuffers();
       tracked.status = "exited";
       tracked.exitCode = code ?? undefined;
     });
@@ -189,19 +272,17 @@ export class ProcessManager {
     totalLinesAvailable: number;
   } {
     const tracked = this.getTrackedProcess(input.workspaceId, input.processId);
-
     const stream = input.stream ?? "both";
-    let sourceLogs: string[];
-    if (stream === "stdout") sourceLogs = tracked.stdoutLogs;
-    else if (stream === "stderr") sourceLogs = tracked.stderrLogs;
-    else sourceLogs = tracked.combinedLogs;
-
+    const sourceLogs = stream === "stdout"
+      ? tracked.stdoutLogs
+      : stream === "stderr"
+        ? tracked.stderrLogs
+        : tracked.combinedLogs;
     const limit = Math.min(Math.max(input.lines ?? 100, 1), 500);
-    const recent = sourceLogs.slice(-limit);
 
     return {
       processId: tracked.id,
-      lines: recent,
+      lines: sourceLogs.slice(-limit),
       totalLinesAvailable: sourceLogs.length,
     };
   }
@@ -215,7 +296,7 @@ export class ProcessManager {
     exitCode?: number;
     detectedUrls: string[];
   }> {
-    const list: Array<{
+    const list = [] as Array<{
       processId: string;
       command: string;
       workingDirectory: string;
@@ -223,22 +304,20 @@ export class ProcessManager {
       status: "running" | "exited";
       exitCode?: number;
       detectedUrls: string[];
-    }> = [];
+    }>;
 
     for (const tracked of this.processes.values()) {
-      if (tracked.workspaceId === input.workspaceId) {
-        list.push({
-          processId: tracked.id,
-          command: tracked.command,
-          workingDirectory: tracked.workingDirectory,
-          startTime: tracked.startTime,
-          status: tracked.status,
-          exitCode: tracked.exitCode,
-          detectedUrls: Array.from(tracked.detectedUrls),
-        });
-      }
+      if (tracked.workspaceId !== input.workspaceId) continue;
+      list.push({
+        processId: tracked.id,
+        command: tracked.command,
+        workingDirectory: tracked.workingDirectory,
+        startTime: tracked.startTime,
+        status: tracked.status,
+        exitCode: tracked.exitCode,
+        detectedUrls: Array.from(tracked.detectedUrls),
+      });
     }
-
     return list;
   }
 
@@ -248,35 +327,43 @@ export class ProcessManager {
     exitCode?: number;
   }> {
     const tracked = this.getTrackedProcess(input.workspaceId, input.processId);
-
     if (tracked.status === "exited") {
       return { processId: tracked.id, stopped: true, exitCode: tracked.exitCode };
     }
 
     const pid = tracked.pid;
     if (!pid) {
-      tracked.child.kill("SIGKILL");
-      tracked.status = "exited";
-      return { processId: tracked.id, stopped: true };
+      const killed = tracked.child.kill(input.force ? "SIGKILL" : "SIGTERM");
+      if (!killed) return { processId: tracked.id, stopped: false, exitCode: tracked.exitCode };
+      const exited = await this.waitForExit(tracked, 2000);
+      return { processId: tracked.id, stopped: exited, exitCode: tracked.exitCode };
     }
 
-    if (input.force) {
-      await this.killProcessTree(pid);
-      tracked.status = "exited";
-      return { processId: tracked.id, stopped: true };
+    await this.signalProcessTree(pid, input.force ? "SIGKILL" : "SIGTERM", Boolean(input.force));
+    let exited = await this.waitForExit(tracked, input.force ? 2000 : 1500);
+
+    if (!exited && !input.force) {
+      await this.signalProcessTree(pid, "SIGKILL", true);
+      exited = await this.waitForExit(tracked, 2000);
     }
 
-    // Try graceful kill first
-    tracked.child.kill("SIGTERM");
-
-    // Wait up to 1.5 seconds for graceful exit
-    const exited = await this.waitForExit(tracked, 1500);
-    if (!exited) {
-      await this.killProcessTree(pid);
+    if (!exited && !isPidRunning(pid)) {
       tracked.status = "exited";
+      exited = true;
     }
 
-    return { processId: tracked.id, stopped: true, exitCode: tracked.exitCode };
+    return { processId: tracked.id, stopped: exited, exitCode: tracked.exitCode };
+  }
+
+  async stopAllProcesses(): Promise<void> {
+    const running = Array.from(this.processes.values()).filter((tracked) => tracked.status === "running");
+    await Promise.allSettled(
+      running.map((tracked) => this.stopProcess({
+        workspaceId: tracked.workspaceId,
+        processId: tracked.id,
+        force: true,
+      })),
+    );
   }
 
   getTrackedProcess(workspaceId: string, processId: string): TrackedProcess {
@@ -287,27 +374,58 @@ export class ProcessManager {
     return tracked;
   }
 
+  private pruneHistory(): void {
+    if (this.processes.size < MAX_TRACKED_PROCESSES) return;
+    const exited = Array.from(this.processes.values())
+      .filter((tracked) => tracked.status === "exited")
+      .sort((left, right) => left.startTime.localeCompare(right.startTime));
+    while (this.processes.size >= MAX_TRACKED_PROCESSES && exited.length > 0) {
+      const oldest = exited.shift();
+      if (oldest) this.processes.delete(oldest.id);
+    }
+    if (this.processes.size >= MAX_TRACKED_PROCESSES) {
+      throw new Error(`Tracked process capacity reached (max ${MAX_TRACKED_PROCESSES}). Stop existing processes first.`);
+    }
+  }
+
   private async waitForExit(tracked: TrackedProcess, timeoutMs: number): Promise<boolean> {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
       if (tracked.status === "exited") return true;
+      if (tracked.pid && !isPidRunning(tracked.pid)) {
+        tracked.status = "exited";
+        return true;
+      }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     return tracked.status === "exited";
   }
 
-  private async killProcessTree(pid: number): Promise<void> {
+  private async signalProcessTree(pid: number, signal: NodeJS.Signals, force: boolean): Promise<void> {
+    if (!isPidRunning(pid)) return;
+
     if (process.platform === "win32") {
+      const args = ["/T", "/PID", String(pid)];
+      if (force) args.unshift("/F");
       try {
-        await execFileAsync("taskkill", ["/F", "/T", "/PID", String(pid)]);
-      } catch {}
-    } else {
+        await execFileAsync("taskkill", args);
+      } catch (error) {
+        if (!isPidRunning(pid)) return;
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new Error(`Failed to terminate process tree ${pid}: ${reason}`);
+      }
+      return;
+    }
+
+    try {
+      process.kill(-pid, signal);
+    } catch (groupError) {
       try {
-        process.kill(-pid, "SIGKILL");
-      } catch {
-        try {
-          process.kill(pid, "SIGKILL");
-        } catch {}
+        process.kill(pid, signal);
+      } catch (processError) {
+        if (!isPidRunning(pid)) return;
+        const reason = processError instanceof Error ? processError.message : String(processError);
+        throw new Error(`Failed to signal process ${pid}: ${reason}; group signal error: ${String(groupError)}`);
       }
     }
   }

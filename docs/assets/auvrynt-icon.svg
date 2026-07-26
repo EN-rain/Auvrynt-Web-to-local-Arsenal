@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Auvrynt icon</title>
+  <desc id="desc">Minimal purple A monogram with a sweeping cross stroke on a dark purple rounded square.</desc>
+  <defs>
+    <linearGradient id="bg" x1="28" y1="20" x2="220" y2="236" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#160625"/>
+      <stop offset="0.55" stop-color="#250a3d"/>
+      <stop offset="1" stop-color="#12051f"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="70" y1="204" x2="188" y2="52" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8b5cf6"/>
+      <stop offset="0.52" stop-color="#a855f7"/>
+      <stop offset="1" stop-color="#c084fc"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#bg)"/>
+  <path d="M60 199 112 93c6-13 10-23 16-23 7 0 11 10 17 23l35 72-28 2-24-52-26 55-42 29Z" fill="url(#mark)"/>
+  <path d="M58 201c39-42 88-72 151-76-53 8-100 29-145 65l-6 11Z" fill="url(#mark)"/>
+  <path d="m158 145 19 39c2 4 5 6 9 6h13l-23-48-18 3Z" fill="#7c3aed"/>
+</svg>

@@ -9,21 +9,27 @@ export interface BlenderClientConfig {
 
 export class BlenderClient {
   private static readonly MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+  private static activeExecutionPromise: Promise<unknown> = Promise.resolve();
   private readonly host: string;
   private readonly port: number;
   private readonly timeoutMs: number;
   private readonly longTaskTimeoutMs: number;
-  private activeMutationPromise: Promise<any> = Promise.resolve();
 
   constructor(config: BlenderClientConfig = {}) {
     this.host = config.host || "127.0.0.1";
-    this.port = config.port || 49323;
-    this.timeoutMs = config.timeoutMs || 180000;
-    this.longTaskTimeoutMs = config.longTaskTimeoutMs || 7200000;
+    this.port = config.port ?? 49323;
+    this.timeoutMs = config.timeoutMs ?? 180000;
+    this.longTaskTimeoutMs = config.longTaskTimeoutMs ?? 7200000;
 
-    // Security check: enforce loopback host
-    if (this.host !== "127.0.0.1" && this.host !== "localhost") {
+    const normalizedHost = this.host.toLowerCase().replace(/^\[|\]$/g, "");
+    if (!["127.0.0.1", "localhost", "::1"].includes(normalizedHost)) {
       throw new Error(`Forbidden host: ${this.host}. Only loopback connection is allowed for Blender MCP.`);
+    }
+    if (!Number.isInteger(this.port) || this.port < 1 || this.port > 65535) {
+      throw new Error(`Invalid Blender bridge port: ${this.port}`);
+    }
+    if (!Number.isFinite(this.timeoutMs) || this.timeoutMs < 1 || !Number.isFinite(this.longTaskTimeoutMs) || this.longTaskTimeoutMs < 1) {
+      throw new Error("Blender bridge timeouts must be positive numbers.");
     }
   }
 
@@ -33,8 +39,9 @@ export class BlenderClient {
    */
   async sendExecute(code: string, strictJson = true, isLongTask = false): Promise<any> {
     const action = () => this.sendExecuteInternal(code, strictJson, isLongTask);
-    this.activeMutationPromise = this.activeMutationPromise.then(action, action);
-    return this.activeMutationPromise;
+    const execution = BlenderClient.activeExecutionPromise.then(action, action);
+    BlenderClient.activeExecutionPromise = execution.then(() => undefined, () => undefined);
+    return execution;
   }
 
   private async sendExecuteInternal(code: string, strictJson: boolean, isLongTask: boolean): Promise<any> {
@@ -98,8 +105,9 @@ export class BlenderClient {
               } else {
                 reject(new Error(parsed.message || "Unknown Blender execution error"));
               }
-            } catch (e: any) {
-              reject(new Error(`Failed to parse Blender JSON response: ${e.message}`));
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              reject(new Error(`Failed to parse Blender JSON response: ${message}`));
             }
           }
         });
@@ -108,9 +116,9 @@ export class BlenderClient {
           cleanup();
           reject(new Error(`Blender connection error: ${err.message}`));
         });
-      } catch (err: any) {
+      } catch (error) {
         cleanup();
-        reject(err);
+        reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
   }
@@ -122,8 +130,15 @@ const activeBlenderClients = new Map<string, BlenderClient>();
 export function getBlenderClient(workspaceId: string, config?: BlenderClientConfig): BlenderClient {
   let client = activeBlenderClients.get(workspaceId);
   if (!client) {
+    if (activeBlenderClients.size >= 32) {
+      throw new Error("Blender client capacity reached (max 32 workspaces).");
+    }
     client = new BlenderClient(config);
     activeBlenderClients.set(workspaceId, client);
   }
   return client;
+}
+
+export function clearBlenderClients(): void {
+  activeBlenderClients.clear();
 }

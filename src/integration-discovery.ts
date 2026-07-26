@@ -95,7 +95,7 @@ export async function discoverLocalIntegrations(): Promise<LocalIntegrationDisco
   } catch {}
 
   const blenderMcpPort = Number(process.env.AUVRYNT_BLENDER_MCP_PORT ?? 9876);
-  const [processes, cloudflaredSys, serenaSys, godotSys, blenderSys, blenderLabMcp, auvryntBlenderBridge, auvryntGodotBridge, playwrightMcp] = await Promise.all([
+  const [processes, cloudflaredSys, serenaSys, godotSys, blenderSys, blenderLabMcp, auvryntBlenderBridge, auvryntGodotBridge] = await Promise.all([
     runningProcessNames(),
     findExecutable("cloudflared"),
     findExecutable("serena"),
@@ -104,7 +104,6 @@ export async function discoverLocalIntegrations(): Promise<LocalIntegrationDisco
     probePort("127.0.0.1", blenderMcpPort),
     probePort("127.0.0.1", 49323),
     probePort("127.0.0.1", 49322),
-    probePort("127.0.0.1", Number(process.env.AUVRYNT_PLAYWRIGHT_PORT ?? 3000)),
   ]);
 
   const serena = configExecs.serena || serenaSys;
@@ -125,7 +124,6 @@ export async function discoverLocalIntegrations(): Promise<LocalIntegrationDisco
       blender_lab_mcp: blenderLabMcp,
       auvrynt_blender_bridge: auvryntBlenderBridge,
       auvrynt_godot_bridge: auvryntGodotBridge,
-      playwright: playwrightMcp,
     },
   };
 }

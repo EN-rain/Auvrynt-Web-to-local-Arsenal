@@ -4,7 +4,7 @@ import { join } from "node:path";
 import assert from "node:assert/strict";
 import { loadConfig } from "./config.js";
 import { WorkspaceRegistry } from "./workspaces.js";
-import { validateWebUrl } from "./web-tools.js";
+import { assertSafeWebUrl, validateWebUrl } from "./web-tools.js";
 
 const root = await mkdtemp(join(tmpdir(), "auvrynt-web-test-"));
 
@@ -31,6 +31,17 @@ try {
   assert.throws(() => validateWebUrl("http://169.254.169.254/latest/meta-data/"), /Blocked SSRF/i);
   assert.throws(() => validateWebUrl("http://10.0.0.1/admin"), /Blocked SSRF/i);
   assert.throws(() => validateWebUrl("http://192.168.1.1/router"), /Blocked SSRF/i);
+  assert.throws(() => validateWebUrl("http://100.64.0.1/"), /Blocked SSRF/i);
+  assert.throws(() => validateWebUrl("http://[fc00::1]/"), /Blocked SSRF/i);
+  assert.throws(() => validateWebUrl("https://user:pass@example.com/"), /embedded credentials/i);
+
+  // 4. Request-level validation distinguishes intentional local dev pages from remote SSRF.
+  await assert.rejects(() => assertSafeWebUrl("http://127.0.0.1:3000/"), /loopback/i);
+  assert.equal(
+    await assertSafeWebUrl("http://127.0.0.1:3000/", true),
+    "http://127.0.0.1:3000/",
+  );
+  await assert.rejects(() => assertSafeWebUrl("http://169.254.169.254/", true), /non-public/i);
 } finally {
   await rm(root, { recursive: true, force: true });
 }

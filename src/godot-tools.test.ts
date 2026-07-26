@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
@@ -10,6 +10,12 @@ import {
   parseGodotProjectFile,
   parseGodotScene,
 } from "./godot-tools.js";
+
+const packagedBridge = await readFile(new URL("../addons/auvrynt_bridge/auvrynt_bridge.gd", import.meta.url), "utf8");
+const bridgeLines = packagedBridge.replace(/^\uFEFF/, "").split(/\r?\n/);
+assert.equal(bridgeLines[0], "@tool");
+assert.equal(bridgeLines[1], "extends EditorPlugin");
+assert.equal(packagedBridge.includes("Claude connector after restart.@tool"), false);
 
 const root = await mkdtemp(join(tmpdir(), "auvrynt-godot-test-"));
 

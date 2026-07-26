@@ -35,12 +35,16 @@ export interface WorkspaceStore {
   close?(): void;
 }
 
+const WORKSPACE_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const MAX_PERSISTED_WORKSPACE_SESSIONS = 512;
+
 export class SqliteWorkspaceStore implements WorkspaceStore {
   private readonly database: DatabaseHandle;
 
   constructor(stateDir: string) {
     this.database = openDatabase(stateDir);
     this.migrate();
+    this.pruneStaleSessions();
   }
 
   createSession(input: {
@@ -159,6 +163,24 @@ export class SqliteWorkspaceStore implements WorkspaceStore {
     if (columns.some((existingColumn) => existingColumn.name === column)) return;
 
     this.database.sqlite.exec(`alter table ${table} add column ${column} ${definition}`);
+  }
+
+  private pruneStaleSessions(): void {
+    const cutoff = new Date(Date.now() - WORKSPACE_SESSION_TTL_MS).toISOString();
+    const transaction = this.database.sqlite.transaction(() => {
+      this.database.sqlite
+        .prepare("delete from workspace_sessions where last_used_at < ?")
+        .run(cutoff);
+      this.database.sqlite.prepare(`
+        delete from workspace_sessions
+        where id in (
+          select id from workspace_sessions
+          order by last_used_at desc
+          limit -1 offset ?
+        )
+      `).run(MAX_PERSISTED_WORKSPACE_SESSIONS);
+    });
+    transaction();
   }
 }
 

@@ -1,4 +1,4 @@
-    Recreate or edit the Claude connector after restart.@tool
+@tool
 extends EditorPlugin
 
 # ─── Configuration ────────────────────────────────────────────────────────────
@@ -7,6 +7,7 @@ const DEFAULT_PORT = 49322
 const MAX_CONNECTIONS = 1
 const READ_BUFFER_SIZE = 65536
 const PROTOCOL_VERSION = 1
+const TOKEN_PATH = "res://.godot/auvrynt_bridge.token"
 
 # ─── State ────────────────────────────────────────────────────────────────────
 var _server: TCPServer
@@ -19,18 +20,34 @@ var _read_buf: PackedByteArray = PackedByteArray()
 func _enter_tree() -> void:
 	var crypto = Crypto.new()
 	_session_token = Marshalls.raw_to_base64(crypto.generate_random_bytes(32))
+	_write_session_token()
 	_server = TCPServer.new()
 	_port = ProjectSettings.get_setting("auvrynt_bridge/port", DEFAULT_PORT) as int
 	var err = _server.listen(_port, BIND_ADDRESS)
 	if err == OK:
-		print("[AuvryntBridge] Listening on %s:%d  token=%s" % [BIND_ADDRESS, _port, _session_token])
+		print("[AuvryntBridge] Listening on %s:%d  token_file=%s" % [BIND_ADDRESS, _port, TOKEN_PATH])
 	else:
+		_remove_session_token()
 		push_error("[AuvryntBridge] Failed to listen on port %d (err=%d)" % [_port, err])
 
 func _exit_tree() -> void:
 	if _server:
 		_server.stop()
 	_peer = null
+	_remove_session_token()
+
+func _write_session_token() -> void:
+	var token_file = FileAccess.open(TOKEN_PATH, FileAccess.WRITE)
+	if token_file:
+		token_file.store_string(_session_token)
+		token_file.close()
+	else:
+		push_error("[AuvryntBridge] Could not write session token to %s" % TOKEN_PATH)
+
+func _remove_session_token() -> void:
+	var token_path = ProjectSettings.globalize_path(TOKEN_PATH)
+	if FileAccess.file_exists(TOKEN_PATH):
+		DirAccess.remove_absolute(token_path)
 
 func _process(_delta: float) -> void:
 	# Accept new connection (single-peer model)

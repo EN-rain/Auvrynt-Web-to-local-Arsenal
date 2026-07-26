@@ -35,7 +35,7 @@ npx auvrynt config set publicBaseUrl https://auvrynt.example.com
 | `AUVRYNT_ALLOWED_ROOTS` | Comma-separated local roots that workspaces may open. |
 | `AUVRYNT_PUBLIC_BASE_URL` | Public origin for the server, without `/mcp`. |
 | `AUVRYNT_ALLOWED_HOSTS` | Optional Host header allowlist override. |
-| `AUVRYNT_OAUTH_OWNER_TOKEN` | Owner password for OAuth approval. Must be at least 16 characters. |
+| `AUVRYNT_OAUTH_OWNER_TOKEN` | Owner token for OAuth approval. Must be at least 16 characters. |
 | `AUVRYNT_WORKTREE_ROOT` | Directory for managed Git worktrees. Defaults to `~/.auvrynt/worktrees`. |
 | `AUVRYNT_STATE_DIR` | Directory for SQLite state. Defaults to `~/.local/share/auvrynt`. |
 
@@ -47,8 +47,10 @@ Auvrynt uses a single-user OAuth approval flow.
 | --- | --- |
 | `AUVRYNT_OAUTH_ACCESS_TOKEN_TTL_SECONDS` | `3600` |
 | `AUVRYNT_OAUTH_REFRESH_TOKEN_TTL_SECONDS` | `2592000` |
-| `AUVRYNT_OAUTH_SCOPES` | `auvrynt` |
-| `AUVRYNT_OAUTH_ALLOWED_REDIRECT_HOSTS` | `chatgpt.com,localhost,127.0.0.1` |
+| `AUVRYNT_OAUTH_SCOPES` | `auvrynt:read,auvrynt:write,auvrynt:process,auvrynt:web,auvrynt:software,auvrynt:godot,auvrynt:blender,auvrynt:serena` |
+| `AUVRYNT_OAUTH_ALLOWED_REDIRECT_HOSTS` | `chatgpt.com,claude.ai,claude.com,localhost,127.0.0.1` |
+
+`auvrynt:blender-python` is intentionally **not** granted by default. Add it to `AUVRYNT_OAUTH_SCOPES` only when a trusted client must use the arbitrary Blender Python escape hatch. Auvrynt enforces scopes per tool call, not only at login.
 
 MCP clients discover metadata from:
 
@@ -108,7 +110,8 @@ npx auvrynt start
 | `AUVRYNT_LOG_ASSETS` | `0` |
 | `AUVRYNT_LOG_TOOL_CALLS` | `1` |
 | `AUVRYNT_LOG_SHELL_COMMANDS` | `0` |
-| `AUVRYNT_TRUST_PROXY` | `0` |
+
+Auvrynt trusts forwarded client information only from an immediate loopback proxy. This is fixed behavior rather than a runtime toggle so direct remote clients cannot opt into spoofable forwarding headers.
 
 Set `AUVRYNT_LOG_FORMAT=pretty` for local debugging.
 

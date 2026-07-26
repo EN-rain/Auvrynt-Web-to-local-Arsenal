@@ -6,8 +6,10 @@ to your development machine.
 The security model is simple:
 
 - you choose a narrow filesystem allowlist
-- the MCP endpoint requires OAuth approval with your Owner password
+- the MCP endpoint requires OAuth approval with your Owner token
+- OAuth scopes are enforced per tool call
 - Host headers are allowlisted from the configured public URL
+- forwarded client IPs are trusted only from an immediate loopback proxy
 - every coding action happens through explicit MCP tool calls
 
 ## Filesystem Allowlist
@@ -32,16 +34,18 @@ C:\
 The narrower the root, the easier it is to reason about what the MCP client can
 reach.
 
-## Owner Password
+## Owner Token
 
-`auvrynt init` generates an Owner password and stores it in:
+`auvrynt init` generates an Owner token and stores it in:
 
 ```text
 ~/.auvrynt/auth.json
 ```
 
 When an MCP client connects, Auvrynt shows an approval page. Enter the Owner
-password only when you intentionally want that client to access this server.
+token only when you intentionally want that client to access this server. Normal
+startup does not print the secret; run `auvrynt token` locally when you explicitly
+need to retrieve it.
 
 For env-driven deployments, set a long random value:
 
@@ -63,7 +67,9 @@ https://your-tunnel-host.example.com
 Do not include `/mcp` in `AUVRYNT_PUBLIC_BASE_URL`.
 
 By default, Auvrynt derives allowed Host headers from the local host and public
-URL. Use `AUVRYNT_ALLOWED_HOSTS=*` only for intentional local debugging.
+URL. Use `AUVRYNT_ALLOWED_HOSTS=*` only for intentional local debugging. Reverse
+proxy forwarding information is accepted only when the immediate proxy is on
+loopback; there is no option to trust arbitrary forwarding headers.
 
 ## Tunnels
 
@@ -84,7 +90,26 @@ package scripts.
 
 Filesystem path containment applies to Auvrynt file tools. Shell commands run
 as local commands and can do what your user account can do. This is why the MCP
-client must be trusted and the Owner password must stay private.
+client must be trusted and the Owner token must stay private.
+
+The `auvrynt:process` scope should therefore be treated as local command-execution
+permission, not as a filesystem sandbox.
+
+## Blender Python
+
+Normal Blender tools require `auvrynt:blender` and are bound to a `.blend` file
+inside the opened workspace. The arbitrary `blender_execute_python` escape hatch
+also requires `auvrynt:blender-python`, which is excluded from the default OAuth
+scope set because Python executed inside Blender has the privileges of the local
+user account.
+
+## Browser Network Access
+
+Playwright browser tools validate each HTTP(S) request, redirect, DNS result, and
+WebSocket destination against local/private/reserved network ranges. Service
+workers are disabled in managed browser contexts so they cannot bypass request
+routing. Intentional localhost development pages are allowed, while unrelated
+LAN, metadata, and private-network destinations remain blocked.
 
 ## Worktrees
 

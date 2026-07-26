@@ -11,13 +11,13 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { checkResourceAllowed, resourceUrlFromServerUrl } from "@modelcontextprotocol/sdk/shared/auth-utils.js";
 import {
   registerAppResource,
-  registerAppTool,
+  registerAppTool as registerExtAppTool,
   RESOURCE_MIME_TYPE,
 } from "@modelcontextprotocol/ext-apps/server";
 import express from "express";
 import type { Request, Response } from "express";
 import * as z from "zod/v4";
-import { loadConfig, type ServerConfig, type WidgetMode } from "./config.js";
+import { loadConfig, type AuvryntScope, type ServerConfig, type WidgetMode } from "./config.js";
 import {
   logEvent,
   requestIp,
@@ -40,11 +40,11 @@ import { formatPathForPrompt } from "./skills.js";
 import { createWorkspaceStore } from "./workspace-store.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
 import { executeViewImage } from "./view-image.js";
-import { ProcessManager } from "./processes.js";
+import { ProcessManager, redactProcessText } from "./processes.js";
 import { getConnectionStatus } from "./connection-status.js";
 import { recordConnectedClient } from "./connection-registry.js";
 import { globFiles, searchText, inspectProject } from "./search-discovery.js";
-import { validateWebUrl, capturePageScreenshot, inspectPage, startDevServer } from "./web-tools.js";
+import { capturePageScreenshot, inspectPage, startDevServer, testResponsivePage } from "./web-tools.js";
 import { inspectImage, compareImages, inspectSprite, splitSpriteSheet } from "./image-tools.js";
 import {
   inspectDotnetProject,
@@ -65,7 +65,7 @@ import { inspectGodotDotnetProject, godotBuildSolutions, godotDotnetRestore } fr
 import { godotDotnetBuild, godotDotnetClean } from "./godot-csharp-build.js";
 import { godotRunProject, godotRunScene, getGodotRuntimeLogs } from "./godot-csharp-runner.js";
 import { godotValidateProject, godotImportAssets } from "./godot-csharp-validate.js";
-import { godotEditorConnect, godotEditorStatus, godotEditorDisconnect, getBridgeClient } from "./godot-editor-bridge.js";
+import { godotEditorConnect, godotEditorStatus, godotEditorDisconnect, getBridgeClient, disconnectAllGodotEditorBridges } from "./godot-editor-bridge.js";
 import { findCsharpClasses, getCsharpDiagnostics, getExportedProperties, generateCsharpScript } from "./godot-csharp-semantic.js";
 import {
   getProjectSettings,
@@ -131,6 +131,7 @@ import {
   lspFindSymbol as gdscriptLspFindSymbol,
   lspGetDefinition as gdscriptLspGetDefinition,
 } from "./godot-gdscript.js";
+import { clearBlenderClients } from "./blender-client.js";
 import {
   blenderPing,
   blenderGetSceneInfo,
@@ -170,6 +171,7 @@ import {
   blenderSaveFile,
   blenderSaveFileAs,
   blenderExportGlb,
+  assertBlenderWorkspaceBound,
 } from "./blender-tools.js";
 import { SerenaManager, defaultSerenaConfig } from "./serena-manager.js";
 import { registerSerenaTools } from "./serena-tools.js";
@@ -188,6 +190,8 @@ const PROCESS_ANNOTATIONS = { readOnlyHint: false, destructiveHint: false, idemp
 const MUTATING_ANNOTATIONS = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false };
 const WEB_READ_ANNOTATIONS = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
 const WEB_WRITE_ANNOTATIONS = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true };
+const MAX_MCP_SESSIONS = 32;
+
 const WRITE_TOOL_ANNOTATIONS = {
   readOnlyHint: false,
   destructiveHint: true,
@@ -207,14 +211,126 @@ const SHELL_TOOL_ANNOTATIONS = {
   openWorldHint: true,
 };
 
-interface RunningServer {
+export interface RunningServer {
   app: ReturnType<typeof createMcpExpressApp>;
   config: ServerConfig;
+  close(): Promise<void>;
 }
 
 type ToolContent =
   | { type: "text"; text: string }
   | { type: "image"; data: string; mimeType: string };
+
+interface McpServerGuardContext {
+  config: ServerConfig;
+  allowedScopes: Set<string>;
+  workspaces: WorkspaceRegistry;
+}
+
+const mcpServerGuards = new WeakMap<McpServer, McpServerGuardContext>();
+const PLAYWRIGHT_TOOL_NAMES = new Set(["capture_page_screenshot", "inspect_page", "test_responsive_page"]);
+const GENERIC_GODOT_TOOL_NAMES = new Set(["detect_godot_project", "inspect_godot_scene"]);
+const GODOT_CSHARP_TOOL_MARKERS = ["dotnet", "csharp", "build_solutions", "generate_vscode_config"];
+
+export function requiredScopesForToolName(name: string): AuvryntScope[] {
+  if (name === "blender_execute_python") return ["auvrynt:blender", "auvrynt:blender-python"];
+  if (name.startsWith("blender_")) return ["auvrynt:blender"];
+  if (name.startsWith("godot_") || GENERIC_GODOT_TOOL_NAMES.has(name)) return ["auvrynt:godot"];
+  if (name.startsWith("serena_")) return ["auvrynt:serena"];
+  if (name === "start_dev_server") return ["auvrynt:web", "auvrynt:process"];
+  if (name === "capture_page_screenshot" || name === "test_responsive_page") return ["auvrynt:web", "auvrynt:write"];
+  if (name === "inspect_page") return ["auvrynt:web"];
+  if (name === "capture_window") return ["auvrynt:process", "auvrynt:write"];
+  if (name === "split_sprite_sheet") return ["auvrynt:write"];
+  if (name === "inspect_dotnet_project") return ["auvrynt:software"];
+  if (["dotnet_restore", "dotnet_build", "dotnet_test", "dotnet_run", "dotnet_format"].includes(name)) {
+    return ["auvrynt:software", "auvrynt:process"];
+  }
+  if (["start_process", "get_process_logs", "list_processes", "stop_process", "run_shell", "bash"].includes(name)) {
+    return ["auvrynt:process"];
+  }
+  if (["write", "write_file", "edit", "edit_file"].includes(name)) return ["auvrynt:write"];
+  return ["auvrynt:read"];
+}
+
+export function requiredScopesForToolCall(name: string, input: unknown): AuvryntScope[] {
+  const required = new Set<AuvryntScope>(requiredScopesForToolName(name));
+  if (name === "compare_images" && input && typeof input === "object" && "diffOutputPath" in input) {
+    if (typeof (input as { diffOutputPath?: unknown }).diffOutputPath === "string") required.add("auvrynt:write");
+  }
+  if (name === "dotnet_format" && input && typeof input === "object") {
+    if ((input as { verifyOnly?: unknown }).verifyOnly !== true) required.add("auvrynt:write");
+  }
+  return Array.from(required);
+}
+
+function hasRequiredScopes(scopes: Iterable<string>, required: readonly string[]): boolean {
+  const available = scopes instanceof Set ? scopes : new Set(scopes);
+  return required.every((scope) => available.has(scope));
+}
+
+function godotIntegrationEnabled(config: ServerConfig, toolName: string): boolean {
+  if (GODOT_CSHARP_TOOL_MARKERS.some((marker) => toolName.includes(marker))) {
+    return config.integrations.godotCsharp;
+  }
+  if (toolName.includes("gdscript") || [
+    "godot_get_global_classes",
+    "godot_add_class_name",
+    "godot_remove_class_name",
+    "godot_get_autoload_usage",
+    "godot_inspect_tool_script",
+    "godot_create_editor_plugin",
+  ].includes(toolName)) {
+    return config.integrations.godotGdscript;
+  }
+  return config.integrations.godotGdscript || config.integrations.godotCsharp;
+}
+
+export function toolIntegrationEnabled(config: ServerConfig, name: string): boolean {
+  if (name.startsWith("blender_")) return config.integrations.blender;
+  if (name.startsWith("godot_") || GENERIC_GODOT_TOOL_NAMES.has(name)) return godotIntegrationEnabled(config, name);
+  if (PLAYWRIGHT_TOOL_NAMES.has(name)) return config.integrations.playwright;
+  if (name.startsWith("serena_")) return config.integrations.serena && config.serena.enabled;
+  return true;
+}
+
+const BLENDER_UNBOUND_TOOL_NAMES = new Set([
+  "blender_ping",
+  "blender_get_current_file",
+  "blender_open_file",
+  "blender_save_file_as",
+  "blender_list_checkpoints",
+]);
+
+const registerAppTool = ((server: McpServer, name: string, toolConfig: unknown, handler: Function) => {
+  const guard = mcpServerGuards.get(server);
+  const requiredScopes = requiredScopesForToolName(name);
+  if (guard) {
+    if (!toolIntegrationEnabled(guard.config, name)) return undefined;
+    if (!hasRequiredScopes(guard.allowedScopes, requiredScopes)) return undefined;
+  }
+
+  const guardedHandler = async (...args: unknown[]) => {
+    const input = args[0];
+    const callScopes = requiredScopesForToolCall(name, input);
+    const extra = args.at(-1) as { authInfo?: { scopes?: string[] } } | undefined;
+    if (!extra?.authInfo?.scopes || !hasRequiredScopes(extra.authInfo.scopes, callScopes)) {
+      throw new Error(`Forbidden: ${name} requires ${callScopes.join(" + ")}`);
+    }
+    if (guard && input && typeof input === "object" && "workspaceId" in input) {
+      const workspaceId = (input as { workspaceId?: unknown }).workspaceId;
+      if (typeof workspaceId === "string") {
+        guard.workspaces.getWorkspace(workspaceId);
+        if (name.startsWith("blender_") && !BLENDER_UNBOUND_TOOL_NAMES.has(name)) {
+          await assertBlenderWorkspaceBound(guard.workspaces, workspaceId);
+        }
+      }
+    }
+    return Reflect.apply(handler, undefined, args);
+  };
+
+  return Reflect.apply(registerExtAppTool, undefined, [server, name, toolConfig, guardedHandler]);
+}) as unknown as typeof registerExtAppTool;
 
 interface WorkspaceAppManifestEntry {
   file: string;
@@ -356,7 +472,7 @@ Godot tools: Use detect_godot_project when a workspace contains project.godot. U
 Window capture: Use capture_window to screenshot a running application tracked by Auvrynt. Use godot_capture_game specifically for Godot game processes.
 Security: All paths must be workspace-relative. Never access files outside the opened workspace. Do not claim a screenshot or comparison succeeded unless the tool returned successfully.`;
 
-  return `Use Auvrynt as a local coding workspace. Call ${toolNames.openWorkspace} once per project folder or worktree to obtain a workspaceId. Reuse that same workspaceId for all later file, search, edit, write, show-changes, view-image, and shell tools in that folder; do not call ${toolNames.openWorkspace} again unless switching folders/worktrees, changing checkout/worktree mode, the workspaceId is rejected as unknown, or the user explicitly asks to reopen. ${agentsMd}${skills}${inspection}${viewImageInstruction}Prefer ${toolNames.edit} for targeted modifications, ${toolNames.write} only for new files or complete rewrites, and ${toolNames.shell} for tests, builds, git inspection, package scripts, and commands that are better executed by the shell. Do not create or modify files with ${toolNames.shell}; avoid shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or any command whose purpose is to write project files.${showChanges}${devTools}`;
+  return `Use Auvrynt as a local coding workspace. Call ${toolNames.openWorkspace} once per project folder or worktree to obtain a workspaceId. Reuse that same workspaceId for all later file, search, edit, write, show-changes, view-image, and shell tools in that folder; do not call ${toolNames.openWorkspace} again unless switching folders/worktrees, changing checkout/worktree mode, the workspaceId is rejected as unknown, or the user explicitly asks to reopen. ${agentsMd}${skills}${inspection}${viewImageInstruction}Prefer ${toolNames.edit} for targeted source-file modifications and ${toolNames.write} only for new files or complete rewrites. Use ${toolNames.shell} for tests, builds, git inspection, package scripts, and commands that genuinely require a shell. The shell/process tools execute with the local user's privileges and are not a filesystem sandbox; only invoke them when the granted auvrynt:process scope and requested task justify local command execution.${showChanges}${devTools}`;
 }
 function resultOutputSchema(extra: z.ZodRawShape = {}): z.ZodRawShape {
   return {
@@ -413,7 +529,7 @@ function sendJsonRpcError(
 
 function requestLogFields(req: Request, config: ServerConfig): Record<string, unknown> {
   return {
-    ip: requestIp(req, config.logging.trustProxy),
+    ip: requestIp(req),
     host: req.header("host"),
     userAgent: req.header("user-agent"),
     origin: req.header("origin"),
@@ -437,7 +553,7 @@ function logToolCall(config: ServerConfig, fields: ToolLogFields): void {
   const { command, ...safeFields } = fields;
   logEvent(config.logging, fields.success ? "info" : "warn", "tool_call", {
     ...safeFields,
-    commandPreview: config.logging.shellCommands && command ? commandPreview(command) : undefined,
+    commandPreview: config.logging.shellCommands && command ? commandPreview(redactProcessText(command)) : undefined,
   });
 }
 
@@ -451,7 +567,7 @@ function contentText(content: ToolContent[]): string {
 }
 
 function toolErrorPreview(content: ToolContent[]): string | undefined {
-  const text = contentText(content).replace(/\s+/g, " ").trim();
+  const text = redactProcessText(contentText(content)).replace(/\s+/g, " ").trim();
   if (!text) return undefined;
   return text.length > 240 ? `${text.slice(0, 237)}...` : text;
 }
@@ -599,6 +715,10 @@ function uiBuildDirectory(): string {
   return fileURLToPath(new URL("../dist/ui", import.meta.url));
 }
 
+function brandAssetDirectory(): string {
+  return fileURLToPath(new URL("../docs/assets", import.meta.url));
+}
+
 function setAssetHeaders(res: Response): void {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
@@ -617,19 +737,29 @@ async function assertWorkspaceAppAssets(): Promise<void> {
   }
 }
 
+function packageVersion(): string {
+  try {
+    const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: unknown };
+    return typeof packageJson.version === "string" ? packageJson.version : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 function createMcpServer(
   config: ServerConfig,
   workspaces: WorkspaceRegistry,
   reviewCheckpoints: ReturnType<typeof createReviewCheckpointManager>,
   serenaManager: SerenaManager,
+  processManager: ProcessManager,
+  allowedScopes: readonly string[],
 ): McpServer {
-  const processManager = new ProcessManager(workspaces);
   const toolNames = toolNamesFor(config);
   const server = new McpServer(
     {
       name: "auvrynt",
       title: "Auvrynt",
-      version: "0.1.0",
+      version: packageVersion(),
       description:
         "Secure local coding workspace for MCP clients. Provides workspace-scoped file, search, edit, write, and shell tools.",
     },
@@ -637,6 +767,7 @@ function createMcpServer(
       instructions: serverInstructions(config, toolNames),
     },
   );
+  mcpServerGuards.set(server, { config, allowedScopes: new Set(allowedScopes), workspaces });
 
   registerAppResource(
     server,
@@ -1389,8 +1520,8 @@ function createMcpServer(
     {
       title: config.toolNaming === "short" ? "Bash" : "Run shell",
       description: config.minimalTools
-        ? `Run a shell command inside an open workspace. Use only for tests, builds, git inspection, package scripts, search, file discovery, and directory inspection. In minimal tool mode, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} are disabled; use command-line tools such as grep, rg, find, ls, and tree for those read-only inspection actions. Do not use ${toolNames.shell} to create or modify files. Do not use shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or generated scripts to write project files; use ${toolNames.edit} for targeted changes and ${toolNames.write} for new files or full rewrites. Prefer ${toolNames.read} for direct file reads. Call open_workspace first and pass workspaceId. This is powerful local execution and should only be exposed behind strong authentication.`
-        : `Run a shell command inside an open workspace. Use only for tests, builds, git inspection, package scripts, and commands that are better executed by the shell. Do not use ${toolNames.shell} to create or modify files. Do not use shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or generated scripts to write project files; use ${toolNames.edit} for targeted changes and ${toolNames.write} for new files or full rewrites. Prefer ${toolNames.read}, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} for file inspection. Call open_workspace first and pass workspaceId. This is powerful local execution and should only be exposed behind strong authentication.`,
+        ? `Run a shell command inside an open workspace. Use for tests, builds, git inspection, package scripts, search, file discovery, and directory inspection. In minimal tool mode, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} are disabled; command-line search tools may be used instead. Prefer ${toolNames.read} for direct file reads and the dedicated edit/write tools for source changes. Shell commands execute with the local user's privileges and can modify files or run programs beyond what path-scoped file tools can do, so this tool requires the privileged auvrynt:process scope. Call open_workspace first and pass workspaceId.`
+        : `Run a shell command inside an open workspace for tests, builds, git inspection, package scripts, and commands that genuinely require a shell. Prefer ${toolNames.read}, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} for inspection and the dedicated edit/write tools for source changes. Shell commands execute with the local user's privileges and can modify files or run programs beyond what path-scoped file tools can do, so this tool requires the privileged auvrynt:process scope. Call open_workspace first and pass workspaceId.`,
       inputSchema: {
         workspaceId: z
           .string()
@@ -1398,7 +1529,7 @@ function createMcpServer(
         command: z
           .string()
           .describe(
-            `Shell command to run. Must not create or modify project files; use ${toolNames.edit} or ${toolNames.write} for file changes.`,
+            `Shell command to run. This executes with local-user privileges; prefer ${toolNames.edit} or ${toolNames.write} for ordinary source-file changes.`,
           ),
         workingDirectory: z
           .string()
@@ -1486,9 +1617,15 @@ function createMcpServer(
       ...toolWidgetDescriptorMeta(config, "read"),
       annotations: READ_ONLY_ANNOTATIONS,
     },
-    async ({ workspaceId }) => {
+    async ({ workspaceId }, extra) => {
       try {
-        const result = await getConnectionStatus(workspaces, processManager, workspaceId);
+        const result = await getConnectionStatus(
+          workspaces,
+          processManager,
+          config,
+          extra.authInfo?.scopes ?? [],
+          workspaceId,
+        );
         return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -1747,6 +1884,30 @@ function createMcpServer(
     async ({ workspaceId, url, includeAccessibilityTree, includeComputedStyles, maxElements }) => {
       return inspectPage(workspaces, { workspaceId, url, includeAccessibilityTree, includeComputedStyles, maxElements });
     },
+  );
+
+  registerAppTool(
+    server,
+    "test_responsive_page",
+    {
+      title: "Test responsive page",
+      description: "Capture the same web page across 1–6 bounded viewports using Playwright. Saves PNGs inside the workspace and returns each screenshot for visual comparison.",
+      inputSchema: {
+        workspaceId: WORKSPACE_ID_SCHEMA,
+        url: z.string().describe("Page URL to test."),
+        outputDirectory: z.string().describe("Workspace-relative directory for viewport screenshots."),
+        viewports: z.array(z.object({
+          name: z.string(),
+          width: z.number().int(),
+          height: z.number().int(),
+        })).max(6).optional().describe("Optional viewport set. Defaults to mobile, tablet, and desktop."),
+        fullPage: z.boolean().optional().describe("Capture the full scrollable page (default true)."),
+      },
+      ...toolWidgetDescriptorMeta(config, "write"),
+      annotations: WEB_WRITE_ANNOTATIONS,
+    },
+    async ({ workspaceId, url, outputDirectory, viewports, fullPage }) =>
+      testResponsivePage(workspaces, { workspaceId, url, outputDirectory, viewports, fullPage }),
   );
 
   // --- Image Inspection and Comparison Tools ---
@@ -3078,7 +3239,9 @@ function createMcpServer(
     ...toolWidgetDescriptorMeta(config, "write"), annotations: MUTATING_ANNOTATIONS,
   }, async (input) => blenderExportGlb(workspaces, input));
 
-  registerSerenaTools(server, config, serenaManager, workspaces);
+  if (config.integrations.serena && config.serena.enabled && allowedScopes.includes("auvrynt:serena")) {
+    registerSerenaTools(server, config, serenaManager, workspaces);
+  }
 
   return server;
 }
@@ -3092,17 +3255,19 @@ export function createServer(config = loadConfig()): RunningServer {
     ...(allowedHosts ? { allowedHosts } : {}),
   });
   const transports = new Map<string, Transport>();
+  const mcpServers = new Map<string, McpServer>();
+  const sessionOwners = new Map<string, string>();
   const mcpUrl = new URL("/mcp", config.publicBaseUrl);
   const resourceServerUrl = resourceUrlFromServerUrl(mcpUrl);
   const oauthProvider = new SingleUserOAuthProvider(config.oauth, mcpUrl);
-  const minimumScope = config.oauth.scopes.includes("auvrynt:read") ? "auvrynt:read" : config.oauth.scopes[0];
   const bearerAuth = requireBearerAuth({
     verifier: oauthProvider,
-    requiredScopes: [minimumScope],
+    requiredScopes: [],
     resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(resourceServerUrl),
   });
   const workspaceStore = createWorkspaceStore(config.stateDir);
   const workspaces = new WorkspaceRegistry(config, workspaceStore);
+  const processManager = new ProcessManager(workspaces);
   const reviewCheckpoints = createReviewCheckpointManager();
   const serenaConfig = {
     enabled: config.serena.enabled,
@@ -3116,9 +3281,10 @@ export function createServer(config = loadConfig()): RunningServer {
   };
   const serenaManager = new SerenaManager(serenaConfig);
 
-  if (config.logging.trustProxy) {
-    app.set("trust proxy", true);
-  }
+  // Auvrynt is commonly exposed through a local reverse proxy/tunnel (for example Cloudflare).
+  // Only loopback proxies are trusted. Never switch this to boolean `true`: that would let a
+  // direct remote client spoof forwarding headers and undermine IP-based rate limits/logging.
+  app.set("trust proxy", "loopback");
 
   app.use((req, res, next) => {
     const requestId = randomUUID();
@@ -3160,6 +3326,15 @@ export function createServer(config = loadConfig()): RunningServer {
   });
 
   app.use(
+    "/brand-assets",
+    express.static(brandAssetDirectory(), {
+      maxAge: "1d",
+      fallthrough: false,
+      setHeaders: setAssetHeaders,
+    }),
+  );
+
+  app.use(
     "/mcp-app-assets",
     express.static(uiBuildDirectory(), {
       immutable: true,
@@ -3198,6 +3373,48 @@ export function createServer(config = loadConfig()): RunningServer {
       return;
     }
 
+    const authScopes = req.auth.scopes ?? [];
+    const toolCalls = Array.isArray(req.body) ? req.body : [req.body];
+    for (const message of toolCalls) {
+      if (!message || typeof message !== "object") continue;
+      const rpc = message as { method?: unknown; params?: { name?: unknown; arguments?: unknown } };
+      if (rpc.method !== "tools/call" || typeof rpc.params?.name !== "string") continue;
+      const toolName = rpc.params.name;
+      const requiredScopes = requiredScopesForToolCall(toolName, rpc.params.arguments);
+      if (!toolIntegrationEnabled(config, toolName)) {
+        logEvent(config.logging, "warn", "auth_denied", {
+          requestId,
+          tool: toolName,
+          reason: "integration_disabled",
+        });
+        sendJsonRpcError(res, 403, -32003, "Forbidden: integration disabled");
+        return;
+      }
+      if (!hasRequiredScopes(authScopes, requiredScopes)) {
+        logEvent(config.logging, "warn", "auth_denied", {
+          requestId,
+          tool: toolName,
+          reason: "missing_scope",
+          requiredScopes,
+        });
+        sendJsonRpcError(res, 403, -32003, "Forbidden: insufficient OAuth scope");
+        return;
+      }
+    }
+
+    if (sessionId) {
+      const ownerClientId = sessionOwners.get(sessionId);
+      if (ownerClientId && ownerClientId !== req.auth.clientId) {
+        logEvent(config.logging, "warn", "auth_denied", {
+          requestId,
+          reason: "mcp_session_owner_mismatch",
+          sessionIdPrefix: sessionIdPrefix(sessionId),
+        });
+        sendJsonRpcError(res, 403, -32003, "Forbidden: MCP session belongs to a different OAuth client");
+        return;
+      }
+    }
+
     try {
       recordConnectedClient(config.stateDir, {
         clientName: mcpClientName(req),
@@ -3228,10 +3445,18 @@ export function createServer(config = loadConfig()): RunningServer {
           return;
         }
       } else if (initializeRequest) {
+        if (transports.size >= MAX_MCP_SESSIONS) {
+          sendJsonRpcError(res, 503, -32000, "MCP session capacity reached");
+          return;
+        }
+
+        let mcpServer: McpServer | undefined;
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (newSessionId) => {
             if (transport) transports.set(newSessionId, transport);
+            if (mcpServer) mcpServers.set(newSessionId, mcpServer);
+            sessionOwners.set(newSessionId, req.auth!.clientId);
             logEvent(config.logging, "info", "mcp_session_created", {
               requestId,
               sessionIdPrefix: sessionIdPrefix(newSessionId),
@@ -3244,14 +3469,23 @@ export function createServer(config = loadConfig()): RunningServer {
           const closedSessionId = transport?.sessionId;
           if (closedSessionId) {
             transports.delete(closedSessionId);
+            mcpServers.delete(closedSessionId);
+            sessionOwners.delete(closedSessionId);
             logEvent(config.logging, "info", "mcp_session_closed", {
               sessionIdPrefix: sessionIdPrefix(closedSessionId),
             });
           }
         };
 
-        const server = createMcpServer(config, workspaces, reviewCheckpoints, serenaManager);
-        await server.connect(transport);
+        mcpServer = createMcpServer(
+          config,
+          workspaces,
+          reviewCheckpoints,
+          serenaManager,
+          processManager,
+          authScopes,
+        );
+        await mcpServer.connect(transport);
       } else {
         sendJsonRpcError(res, 400, -32000, "No valid MCP session");
         return;
@@ -3269,7 +3503,42 @@ export function createServer(config = loadConfig()): RunningServer {
     }
   });
 
-  return { app, config };
+  app.use((error: unknown, req: Request, res: Response, next: (error?: unknown) => void) => {
+    logEvent(config.logging, "error", "http_unhandled_error", {
+      requestId: res.locals.requestId,
+      method: req.method,
+      path: requestPath(req),
+      error: error instanceof Error ? error.message : String(error),
+    });
+    if (res.headersSent) {
+      next(error);
+      return;
+    }
+    res.status(500).json({ error: "Internal server error" });
+  });
+
+  let closed = false;
+  return {
+    app,
+    config,
+    async close(): Promise<void> {
+      if (closed) return;
+      closed = true;
+
+      const servers = Array.from(new Set(mcpServers.values()));
+      mcpServers.clear();
+      transports.clear();
+      sessionOwners.clear();
+      await Promise.allSettled([
+        ...servers.map((server) => server.close()),
+        serenaManager.stopAllSessions(),
+        processManager.stopAllProcesses(),
+      ]);
+      disconnectAllGodotEditorBridges();
+      clearBlenderClients();
+      workspaceStore.close?.();
+    },
+  };
 }
 
 async function isMainModule(): Promise<boolean> {
@@ -3291,6 +3560,6 @@ if (await isMainModule()) {
     console.log(`logging: ${config.logging.level} ${config.logging.format}`);
     console.log(`request logging: ${config.logging.requests ? "enabled" : "disabled"}`);
     console.log(`asset logging: ${config.logging.assets ? "enabled" : "disabled"}`);
-    console.log(`trust proxy: ${config.logging.trustProxy ? "enabled" : "disabled"}`);
+    console.log("trust proxy: loopback only");
   });
 }

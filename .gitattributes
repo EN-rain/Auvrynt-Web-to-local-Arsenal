@@ -1,0 +1,19 @@
+# Keep repository text deterministic across Windows, macOS, and Linux.
+* text=auto eol=lf
+
+# Windows command files require CRLF for maximum compatibility.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary assets must never be line-ending normalized.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.blend binary
+*.glb binary
+*.wasm binary
+*.sqlite binary
+*.db binary

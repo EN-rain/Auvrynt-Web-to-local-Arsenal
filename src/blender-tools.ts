@@ -1,10 +1,11 @@
-import { readFile, stat, unlink } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, readdir, stat, unlink } from "node:fs/promises";
+import { join, relative, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { existsSync } from "node:fs";
 import type { WorkspaceRegistry } from "./workspaces.js";
 import { getBlenderClient } from "./blender-client.js";
 import type { ToolResponse } from "./pi-tools.js";
+import { isPathInsideRoot } from "./roots.js";
 
 // Helper to return clean text tool response
 function textResponse(text: string): ToolResponse {
@@ -19,6 +20,34 @@ function errorResponse(text: string): ToolResponse {
     content: [{ type: "text", text }],
     isError: true,
   };
+}
+
+async function currentBlenderFilePath(workspaceId: string): Promise<string> {
+  const client = getBlenderClient(workspaceId);
+  const result = await client.sendExecute(
+    "import bpy\nresult = {'filepath': bpy.data.filepath or ''}\n",
+  ) as { filepath?: unknown };
+  return typeof result.filepath === "string" ? result.filepath : "";
+}
+
+export async function assertBlenderWorkspaceBound(
+  registry: WorkspaceRegistry,
+  workspaceId: string,
+  options: { allowUntitled?: boolean } = {},
+): Promise<string | undefined> {
+  const workspace = registry.getWorkspace(workspaceId);
+  const filepath = await currentBlenderFilePath(workspaceId);
+  if (!filepath) {
+    if (options.allowUntitled) return undefined;
+    throw new Error("Blender has no saved file bound to this workspace. Open a workspace .blend file or use blender_save_file_as first.");
+  }
+  registry.resolvePath(workspace, filepath);
+  return filepath;
+}
+
+function checkpointDirectory(workspaceId: string): string {
+  const safeId = workspaceId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  return join(tmpdir(), "auvrynt_blender_checkpoints", safeId);
 }
 
 // Helper to read rendered file and return image + text response
@@ -57,11 +86,7 @@ export async function blenderPing(
     const client = getBlenderClient(input.workspaceId);
     const res = await client.sendExecute(
       "import bpy\n" +
-      "result = {\n" +
-      "    'version': bpy.app.version_string,\n" +
-      "    'object_count': len(bpy.data.objects),\n" +
-      "    'scene': bpy.context.scene.name,\n" +
-      "}\n",
+      "result = {'connected': True, 'version': bpy.app.version_string}\n",
     );
     return textResponse(JSON.stringify(res, null, 2));
   } catch (err: any) {
@@ -109,6 +134,7 @@ export async function blenderGetSceneAudit(
   },
 ): Promise<ToolResponse> {
   try {
+    const workspace = registry.getWorkspace(input.workspaceId);
     const client = getBlenderClient(input.workspaceId);
     const includeHidden = input.includeHidden ?? true;
     const includeInstances = input.includeInstances ?? true;
@@ -194,10 +220,23 @@ export async function blenderGetSceneAudit(
       "    'missing_images': missing_images,\n" +
       "    'optimization_warnings': warnings,\n" +
       "}\n",
-    );
+    ) as Record<string, unknown>;
+    if (Array.isArray(res.missing_images)) {
+      res.missing_images = res.missing_images.map((entry) => {
+        if (!entry || typeof entry !== "object") return entry;
+        const image = entry as { name?: unknown; path?: unknown };
+        if (typeof image.path !== "string") return entry;
+        try {
+          const allowedPath = registry.resolvePath(workspace, image.path);
+          return { ...image, path: relative(workspace.root, allowedPath).replace(/\\/g, "/") };
+        } catch {
+          return { name: image.name, path: "[outside workspace]" };
+        }
+      });
+    }
     return textResponse(JSON.stringify(res, null, 2));
-  } catch (err: any) {
-    return errorResponse(`Scene audit failed: ${err.message}`);
+  } catch (error) {
+    return errorResponse(`Scene audit failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -807,15 +846,16 @@ export async function blenderInspectGeometryNodes(
 
 export async function blenderEditModifier(
   registry: WorkspaceRegistry,
-  input: { workspaceId: string; objectName: string; modifierName: string; properties: Record<string, any> },
+  input: { workspaceId: string; objectName: string; modifierName: string; properties: Record<string, unknown> },
 ): Promise<ToolResponse> {
   try {
     const client = getBlenderClient(input.workspaceId);
+    const propertiesJson = JSON.stringify(input.properties);
     const res = await client.sendExecute(
-      "import bpy\n" +
+      "import bpy, json\n" +
       `object_name = ${JSON.stringify(input.objectName)}\n` +
       `modifier_name = ${JSON.stringify(input.modifierName)}\n` +
-      `properties = ${JSON.stringify(input.properties)}\n` +
+      `properties = json.loads(${JSON.stringify(propertiesJson)})\n` +
       "obj = bpy.data.objects.get(object_name)\n" +
       "if obj is None:\n" +
       "    raise RuntimeError('Object not found: ' + object_name)\n" +
@@ -999,22 +1039,23 @@ export async function blenderSaveCheckpoint(
   input: { workspaceId: string; label?: string },
 ): Promise<ToolResponse> {
   try {
+    await assertBlenderWorkspaceBound(registry, input.workspaceId);
     const client = getBlenderClient(input.workspaceId);
-    const label = (input.label || "checkpoint").replace(/[^a-zA-Z0-9_-]/g, "_");
-    const checkpointDir = join(tmpdir(), "blender_mcp_checkpoints");
+    const label = (input.label || "checkpoint").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80) || "checkpoint";
+    const checkpointDir = checkpointDirectory(input.workspaceId);
+    await mkdir(checkpointDir, { recursive: true });
     const filename = `${new Date().toISOString().replace(/[:.]/g, "-")}-${label}.blend`;
     const checkpointPath = join(checkpointDir, filename);
 
     const res = await client.sendExecute(
-      "import os, bpy\n" +
+      "import bpy\n" +
       `checkpoint_path = ${JSON.stringify(checkpointPath)}\n` +
-      "os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)\n" +
       "bpy.ops.wm.save_as_mainfile(filepath=checkpoint_path, copy=True)\n" +
       "result = {'path': checkpoint_path}\n",
     );
     return textResponse(JSON.stringify(res, null, 2));
-  } catch (err: any) {
-    return errorResponse(`Save checkpoint failed: ${err.message}`);
+  } catch (error) {
+    return errorResponse(`Save checkpoint failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -1022,8 +1063,24 @@ export async function blenderListCheckpoints(
   registry: WorkspaceRegistry,
   input: { workspaceId: string },
 ): Promise<ToolResponse> {
-  // Read checkpoints under temp directory blender_mcp_checkpoints
-  return textResponse(JSON.stringify({ checkpoints: [] }, null, 2));
+  try {
+    registry.getWorkspace(input.workspaceId);
+    const checkpointDir = checkpointDirectory(input.workspaceId);
+    if (!existsSync(checkpointDir)) return textResponse(JSON.stringify({ checkpoints: [] }, null, 2));
+
+    const entries = await readdir(checkpointDir, { withFileTypes: true });
+    const checkpoints = [] as Array<{ path: string; name: string; size: number; modifiedAt: string }>;
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".blend")) continue;
+      const path = join(checkpointDir, entry.name);
+      const info = await stat(path);
+      checkpoints.push({ path, name: entry.name, size: info.size, modifiedAt: info.mtime.toISOString() });
+    }
+    checkpoints.sort((left, right) => right.modifiedAt.localeCompare(left.modifiedAt));
+    return textResponse(JSON.stringify({ checkpoints }, null, 2));
+  } catch (error) {
+    return errorResponse(`List checkpoints failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 export async function blenderRollbackCheckpoint(
@@ -1031,15 +1088,29 @@ export async function blenderRollbackCheckpoint(
   input: { workspaceId: string; path: string },
 ): Promise<ToolResponse> {
   try {
+    registry.getWorkspace(input.workspaceId);
+    const originalPath = await assertBlenderWorkspaceBound(registry, input.workspaceId);
+    if (!originalPath) throw new Error("Blender workspace binding is missing.");
+    const checkpointDir = checkpointDirectory(input.workspaceId);
+    const checkpointPath = resolve(input.path);
+    if (!isPathInsideRoot(checkpointPath, checkpointDir) || !checkpointPath.toLowerCase().endsWith(".blend")) {
+      throw new Error("Checkpoint path is outside this workspace's managed Blender checkpoint directory.");
+    }
+    const info = await stat(checkpointPath);
+    if (!info.isFile()) throw new Error("Checkpoint path is not a file.");
+
     const client = getBlenderClient(input.workspaceId);
     const res = await client.sendExecute(
       "import bpy\n" +
-      `bpy.ops.wm.open_mainfile(filepath=${JSON.stringify(input.path)})\n` +
-      `result = {'opened': ${JSON.stringify(input.path)}}\n`,
+      `checkpoint_path = ${JSON.stringify(checkpointPath)}\n` +
+      `original_path = ${JSON.stringify(originalPath)}\n` +
+      "bpy.ops.wm.open_mainfile(filepath=checkpoint_path)\n" +
+      "bpy.ops.wm.save_as_mainfile(filepath=original_path)\n" +
+      "result = {'restored': original_path, 'checkpoint': checkpoint_path}\n",
     );
     return textResponse(JSON.stringify(res, null, 2));
-  } catch (err: any) {
-    return errorResponse(`Rollback checkpoint failed: ${err.message}`);
+  } catch (error) {
+    return errorResponse(`Rollback checkpoint failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -1065,14 +1136,17 @@ export async function blenderGetCurrentFile(
   input: { workspaceId: string },
 ): Promise<ToolResponse> {
   try {
-    const client = getBlenderClient(input.workspaceId);
-    const res = await client.sendExecute(
-      "import bpy\n" +
-      "result = {'filepath': bpy.data.filepath}\n",
-    );
-    return textResponse(JSON.stringify(res, null, 2));
-  } catch (err: any) {
-    return errorResponse(`Get current file failed: ${err.message}`);
+    const workspace = registry.getWorkspace(input.workspaceId);
+    const filepath = await currentBlenderFilePath(input.workspaceId);
+    if (!filepath) return textResponse(JSON.stringify({ filepath: null, withinWorkspace: false }, null, 2));
+    try {
+      registry.resolvePath(workspace, filepath);
+      return textResponse(JSON.stringify({ filepath, withinWorkspace: true }, null, 2));
+    } catch {
+      return textResponse(JSON.stringify({ filepath: null, withinWorkspace: false, detail: "Active Blender file is outside this workspace." }, null, 2));
+    }
+  } catch (error) {
+    return errorResponse(`Get current file failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -1101,6 +1175,7 @@ export async function blenderSaveFile(
   input: { workspaceId: string },
 ): Promise<ToolResponse> {
   try {
+    await assertBlenderWorkspaceBound(registry, input.workspaceId);
     const client = getBlenderClient(input.workspaceId);
     const res = await client.sendExecute(
       "import bpy\n" +
@@ -1122,6 +1197,7 @@ export async function blenderSaveFileAs(
   try {
     const workspace = registry.getWorkspace(input.workspaceId);
     const absPath = registry.resolvePath(workspace, input.filepath);
+    await assertBlenderWorkspaceBound(registry, input.workspaceId, { allowUntitled: true });
     const client = getBlenderClient(input.workspaceId);
 
     const res = await client.sendExecute(

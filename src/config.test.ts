@@ -55,7 +55,6 @@ assert.deepEqual(loadConfig(baseEnv).logging, {
   assets: false,
   toolCalls: true,
   shellCommands: false,
-  trustProxy: false,
 });
 
 assert.equal(loadConfig({ ...baseEnv, AUVRYNT_LOG_LEVEL: "silent" }).logging.level, "silent");
@@ -71,7 +70,6 @@ assert.equal(loadConfig({ ...baseEnv, AUVRYNT_LOG_REQUESTS: "0" }).logging.reque
 assert.equal(loadConfig({ ...baseEnv, AUVRYNT_LOG_ASSETS: "1" }).logging.assets, true);
 assert.equal(loadConfig({ ...baseEnv, AUVRYNT_LOG_TOOL_CALLS: "0" }).logging.toolCalls, false);
 assert.equal(loadConfig({ ...baseEnv, AUVRYNT_LOG_SHELL_COMMANDS: "1" }).logging.shellCommands, true);
-assert.equal(loadConfig({ ...baseEnv, AUVRYNT_TRUST_PROXY: "1" }).logging.trustProxy, true);
 
 assert.throws(
   () => loadConfig({ ...baseEnv, AUVRYNT_LOG_LEVEL: "trace" }),
@@ -104,9 +102,13 @@ assert.deepEqual(loadConfig(baseEnv).oauth.allowedRedirectHosts, [
 assert.equal(loadConfig(baseEnv).oauth.accessTokenTtlSeconds, 3600);
 assert.equal(loadConfig(baseEnv).oauth.refreshTokenTtlSeconds, 2592000);
 
+assert.throws(
+  () => loadConfig({ ...baseEnv, AUVRYNT_OAUTH_SCOPES: "auvrynt:read,admin" }),
+  /unsupported scope\(s\): admin/,
+);
 assert.deepEqual(
-  loadConfig({ ...baseEnv, AUVRYNT_OAUTH_SCOPES: "auvrynt:read,admin" }).oauth.scopes,
-  ["auvrynt:read", "admin"],
+  loadConfig({ ...baseEnv, AUVRYNT_OAUTH_SCOPES: "auvrynt:read,auvrynt:blender,auvrynt:blender-python" }).oauth.scopes,
+  ["auvrynt:read", "auvrynt:blender", "auvrynt:blender-python"],
 );
 assert.deepEqual(
   loadConfig({ ...baseEnv, AUVRYNT_OAUTH_ALLOWED_REDIRECT_HOSTS: "chatgpt.com,example.com" }).oauth
@@ -138,19 +140,46 @@ assert.throws(
 );
 
 assert.equal(loadConfig(baseEnv).publicBaseUrl, "http://127.0.0.1:49321");
-assert.deepEqual(loadConfig(baseEnv).allowedHosts, ["localhost", "127.0.0.1", "::1"]);
+assert.deepEqual(loadConfig(baseEnv).allowedHosts, ["localhost", "127.0.0.1", "[::1]"]);
 
 assert.equal(
   loadConfig({ ...baseEnv, AUVRYNT_PUBLIC_BASE_URL: "https://abc.trycloudflare.com/" }).publicBaseUrl,
   "https://abc.trycloudflare.com",
 );
+assert.throws(
+  () => loadConfig({ ...baseEnv, AUVRYNT_PUBLIC_BASE_URL: "ftp://example.com" }),
+  /Invalid AUVRYNT_PUBLIC_BASE_URL scheme/,
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, AUVRYNT_PUBLIC_BASE_URL: "https://user:pass@example.com" }),
+  /must not contain embedded credentials/,
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, AUVRYNT_PUBLIC_BASE_URL: "https://example.com/mcp" }),
+  /must be an origin only/i,
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, AUVRYNT_PUBLIC_BASE_URL: "https://example.com?debug=1" }),
+  /must be an origin only/i,
+);
 assert.deepEqual(
   loadConfig({ ...baseEnv, AUVRYNT_PUBLIC_BASE_URL: "https://abc.trycloudflare.com/" }).allowedHosts,
-  ["localhost", "127.0.0.1", "::1", "abc.trycloudflare.com"],
+  ["localhost", "127.0.0.1", "[::1]", "abc.trycloudflare.com"],
 );
 assert.deepEqual(
   loadConfig({ ...baseEnv, AUVRYNT_ALLOWED_HOSTS: "*" }).allowedHosts,
   ["*"],
+);
+assert.deepEqual(
+  loadConfig({ ...baseEnv, AUVRYNT_ALLOWED_HOSTS: "EXAMPLE.COM,[::1]" }).allowedHosts,
+  ["example.com", "[::1]"],
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, AUVRYNT_ALLOWED_HOSTS: "https://example.com" }),
+  /Invalid allowed Host entry/i,
+);
+assert.ok(
+  loadConfig({ ...baseEnv, HOST: "::1", AUVRYNT_PUBLIC_BASE_URL: "http://[::1]:49321" }).allowedHosts.includes("[::1]"),
 );
 
 const configDir = mkdtempSync(join(tmpdir(), "auvrynt-config-test-"));
@@ -176,6 +205,6 @@ assert.equal(fileConfig.publicBaseUrl, "https://auvrynt.example.com");
 assert.deepEqual(fileConfig.allowedHosts, [
   "localhost",
   "127.0.0.1",
-  "::1",
+  "[::1]",
   "auvrynt.example.com",
 ]);

@@ -98,7 +98,7 @@ npx auvrynt start
 ## Approve The Client
 
 When ChatGPT, Claude, or another MCP client connects, Auvrynt shows an Owner
-password approval page. Enter the Owner password printed during setup.
+token approval page. Enter the Owner token shown during setup, or retrieve it later with `auvrynt token`.
 
 The default config files are:
 

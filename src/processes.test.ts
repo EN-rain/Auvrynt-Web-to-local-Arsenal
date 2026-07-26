@@ -38,6 +38,18 @@ try {
     redactProcessText("token=secret_123 normal=normal_value", { API_KEY: "secret_123" }),
     "token=[REDACTED] normal=normal_value",
   );
+  assert.equal(
+    redactProcessText("Authorization: Bearer abcdef123456"),
+    "Authorization: Bearer [REDACTED]",
+  );
+  assert.equal(
+    redactProcessText("password=hunter2 DATABASE_URL=postgres://secret-host/db"),
+    "password=[REDACTED] DATABASE_URL=[REDACTED]",
+  );
+  assert.equal(
+    redactProcessText("tool --token abcdef123 https://user:pass@example.com"),
+    "tool --token [REDACTED] https://user:[REDACTED]@example.com",
+  );
 
   // 2. Start process lifecycle
   const command = process.platform === "win32" ? "echo Hello Process && echo Server running on http://127.0.0.1:8080" : "echo 'Hello Process' && echo 'Server running on http://127.0.0.1:8080'";

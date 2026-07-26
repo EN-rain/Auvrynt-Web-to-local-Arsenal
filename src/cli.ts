@@ -1,10 +1,12 @@
 #!/usr/bin/env node
+import { createHash, randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 import { stdin as input, stdout as output } from "node:process";
 import { homedir } from "node:os";
 import { existsSync, rmSync } from "node:fs";
-import { mkdir, open, readFile, unlink, writeFile, type FileHandle } from "node:fs/promises";
+import { chmod, cp, mkdir, open, readFile, unlink, writeFile, type FileHandle } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import * as prompts from "@clack/prompts";
 import { getShellConfig } from "@earendil-works/pi-coding-agent";
@@ -15,17 +17,40 @@ import {
   loadAuvryntFiles,
   writeAuvryntAuth,
   writeAuvryntConfig,
+  type AuvryntIntegrationsConfig,
   type AuvryntUserConfig,
 } from "./user-config.js";
 import { expandHomePath } from "./roots.js";
 import { discoverLocalIntegrations, processDetected } from "./integration-discovery.js";
 import { readConnectedClients } from "./connection-registry.js";
-import { ensureGlobalGodotPlugin } from "./godot-tools.js";
+import { ensureGlobalGodotPlugin, getGlobalGodotPluginStatus } from "./godot-tools.js";
+import { ensurePlaywrightRuntime, getPlaywrightRuntimeStatus } from "./playwright-runtime.js";
 
 
-type Command = "serve" | "init" | "doctor" | "status" | "connected" | "uninstall" | "config" | "setup" | "help";
+type Command = "serve" | "init" | "doctor" | "status" | "connected" | "token" | "uninstall" | "config" | "setup" | "enable" | "disable" | "help";
 const require = createRequire(import.meta.url);
 const SUPPORTED_NODE_RANGE = ">=20.12 <27";
+const MANAGED_SERENA_PACKAGE = "serena-agent==1.6.0";
+const MANAGED_UV_PACKAGE = "uv==0.11.32";
+const MANAGED_CLOUDFLARED_VERSION = "2026.7.2";
+
+function httpUrl(host: string, port: number, path = ""): string {
+  const formattedHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `http://${formattedHost}:${port}${path}`;
+}
+
+function localProbeHost(host: string): string {
+  return host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
+}
+const INTEGRATION_KEYS = ["godotGdscript", "godotCsharp", "blender", "serena", "playwright"] as const;
+type IntegrationKey = (typeof INTEGRATION_KEYS)[number];
+const INTEGRATION_LABELS: Record<IntegrationKey, string> = {
+  godotGdscript: "Godot GDScript",
+  godotCsharp: "Godot C#",
+  blender: "Blender",
+  serena: "Serena",
+  playwright: "Playwright",
+};
 
 async function main(argv: string[]): Promise<void> {
   assertSupportedNode();
@@ -43,15 +68,18 @@ async function main(argv: string[]): Promise<void> {
         process.env.AUVRYNT_WORKTREE_ROOT = launchRoot;
       }
       await ensureConfigured({ directoryScoped: rawCommand === "start" });
+      if (rawCommand === "start") {
+        await ensureIntegrationChoicesConfigured();
+      }
       const localConfig = loadConfig();
-      const instanceLock = await acquireInstanceLock(localConfig.stateDir);
+      const instanceLock = await acquireInstanceLock(localConfig.stateDir, localConfig.host, localConfig.port);
       let tunnel: { process: ChildProcess; url: string } | undefined;
       let stopTunnel: (() => void) | undefined;
       try {
         if (rawCommand === "start") {
           process.env.AUVRYNT_START_MODE = "true";
-          process.env.AUVRYNT_SERENA_ENABLED = "true";
-          process.env.AUVRYNT_SERENA_EXECUTABLE = await ensureSerenaExecutable();
+          const launchRoot = resolve(process.cwd());
+          await selfHealStartIntegrations(launchRoot, localConfig.executables, localConfig.integrations);
           tunnel = await startCloudflareTunnel(localConfig.port);
           process.env.AUVRYNT_PUBLIC_BASE_URL = tunnel.url;
           stopTunnel = () => {
@@ -82,6 +110,9 @@ async function main(argv: string[]): Promise<void> {
     case "connected":
       runConnected();
       return;
+    case "token":
+      runToken();
+      return;
     case "uninstall":
       await runUninstall(args.includes("--yes") || args.includes("-y"));
       return;
@@ -89,7 +120,13 @@ async function main(argv: string[]): Promise<void> {
       runConfigCommand(args);
       return;
     case "setup":
-      await runSetup(args.slice(1));
+      await runSetup(args);
+      return;
+    case "enable":
+      await runEnable();
+      return;
+    case "disable":
+      await runDisable();
       return;
     case "help":
       printHelp();
@@ -100,8 +137,8 @@ async function main(argv: string[]): Promise<void> {
 function normalizeCommand(command: string | undefined): Command {
   if (!command || command === "serve" || command === "start") return "serve";
   if (command === "init" || command === "doctor" || command === "config") return command;
-  if (command === "status" || command === "connected" || command === "uninstall") return command;
-  if (command === "setup") return "setup";
+  if (command === "status" || command === "connected" || command === "token" || command === "uninstall") return command;
+  if (command === "setup" || command === "enable" || command === "disable") return command;
   if (command === "help" || command === "--help" || command === "-h") return "help";
   throw new Error(`Unknown command: ${command}`);
 }
@@ -210,17 +247,17 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
     const lines = [
       `Config: ${configPath}`,
       `Auth: ${authPath}`,
-      `Local MCP URL: http://${config.host}:${config.port}/mcp`,
+      `Local MCP URL: ${httpUrl(config.host ?? "127.0.0.1", config.port ?? 49321, "/mcp")}`,
       ...(publicBaseUrl ? [`Public MCP URL: ${publicBaseUrl}/mcp`] : []),
     ];
     prompts.note(lines.join("\n"), "Auvrynt configured");
     prompts.note(
       [
-        `Owner password: ${auth.ownerToken}`,
+        `Owner token: ${auth.ownerToken}`,
         "Use this when ChatGPT or Claude asks you to approve Auvrynt access.",
         `Stored at: ${authPath}`,
       ].join("\n"),
-      "Owner password",
+      "Owner token",
     );
     prompts.outro("Run `auvrynt start` to start the MCP server.");
   } catch (error) {
@@ -248,23 +285,26 @@ async function serve(): Promise<void> {
 
   const { createServer } = await import("./server.js");
   const config = loadConfig();
-  const { app } = createServer(config);
+  const runningServer = createServer(config);
+  const { app } = runningServer;
 
   const startMode = process.env.AUVRYNT_START_MODE === "true";
   const files = loadAuvryntFiles();
-  const ownerToken = files.auth.ownerToken || "not_configured";
   const publicMcpUrl = config.publicBaseUrl
     ? `${config.publicBaseUrl.replace(/\/$/, "")}/mcp`
-    : `http://${config.host}:${config.port}/mcp`;
+    : httpUrl(config.host, config.port, "/mcp");
 
-  const godotPlugin = ensureGlobalGodotPlugin();
+  const godotPlugin = getGlobalGodotPluginStatus();
   const godotIsSetup = Boolean(config.executables.godot || config.executables.godotCsharp);
 
   // Probe integration ports before starting the server
   const integrationStatus = await discoverLocalIntegrations();
 
-  function integrationLine(label: string, reachable: boolean, configured?: boolean): string {
+  function integrationLine(label: string, reachable: boolean, configured?: boolean, enabled = true): string {
     const padded = label.padEnd(20);
+    if (!enabled) {
+      return `  \x1b[90m${padded}\x1b[0m  \x1b[90mdisabled\x1b[0m`;
+    }
     if (reachable) {
       return `  \x1b[90m${padded}\x1b[0m  \x1b[32m200 OK\x1b[0m`;
     } else if (configured) {
@@ -287,13 +327,13 @@ async function serve(): Promise<void> {
       const godotConfigured = godotIsSetup || godotPlugin.installed;
       const godotCsharpConfigured = Boolean(config.executables.godotCsharp);
       const blenderConfigured = Boolean(integrationStatus.executables.blender);
-      const serenaConfigured = Boolean(integrationStatus.executables.serena) || processDetected(integrationStatus, "serena");
-      const serenaRunning = processDetected(integrationStatus, "serena");
-      console.log(integrationLine("Godot GDScript:", godotBridgeUp, godotConfigured));
-      console.log(integrationLine("Godot C#:", godotBridgeUp, godotCsharpConfigured));
-      console.log(integrationLine("Blender:", blenderBridgeUp, blenderConfigured));
-      console.log(integrationLine("Serena:", serenaRunning, serenaConfigured));
-      console.log(integrationLine("Playwright:", integrationStatus.ports.playwright ?? false, false));
+      const serenaConfigured = Boolean(process.env.AUVRYNT_SERENA_EXECUTABLE || integrationStatus.executables.serena || processDetected(integrationStatus, "serena"));
+      const playwrightReady = getPlaywrightRuntimeStatus().chromiumInstalled;
+      console.log(integrationLine("Godot GDScript:", godotBridgeUp, godotConfigured, config.integrations.godotGdscript));
+      console.log(integrationLine("Godot C#:", godotBridgeUp, godotCsharpConfigured, config.integrations.godotCsharp));
+      console.log(integrationLine("Blender:", blenderBridgeUp, blenderConfigured, config.integrations.blender));
+      console.log(integrationLine("Serena:", serenaConfigured, serenaConfigured, config.integrations.serena));
+      console.log(integrationLine("Playwright:", playwrightReady, playwrightReady, config.integrations.playwright));
       console.log("");
 
       console.log("  \x1b[90mWeb Agent connector URL:\x1b[0m");
@@ -301,7 +341,7 @@ async function serve(): Promise<void> {
       console.log("  \x1b[90mAuthorization page:\x1b[0m");
       console.log("    \x1b[36m" + config.publicBaseUrl.replace(/\/$/, "") + "/authorize\x1b[0m");
       console.log("  \x1b[90mOwner token:\x1b[0m");
-      console.log("    \x1b[33m" + ownerToken + "\x1b[0m");
+      console.log("    \x1b[33mhidden — run `auvrynt token` locally to view\x1b[0m");
       console.log("");
       console.log("  \x1b[90mNote:\x1b[0m");
       console.log("    Web-agent workspace: " + config.allowedRoots.join(", "));
@@ -327,35 +367,45 @@ async function serve(): Promise<void> {
 
       (global as any).auvryntStartInterval = interval;
     } else {
-      console.log(`auvrynt listening on http://${config.host}:${config.port}/mcp`);
+      console.log(`auvrynt listening on ${httpUrl(config.host, config.port, "/mcp")}`);
       console.log(`public base url: ${config.publicBaseUrl}`);
       console.log(`allowed roots: ${config.allowedRoots.join(", ")}`);
       console.log(`allowed hosts: ${config.allowedHosts.join(", ")}`);
       if (config.allowedHosts.includes("*")) {
         console.warn("warning: Host header allowlist is disabled because AUVRYNT_ALLOWED_HOSTS=*");
       }
-      console.log("auth: Owner password approval required");
+      console.log("auth: Owner token approval required");
       console.log(`logging: ${config.logging.level} ${config.logging.format}`);
     }
   });
 
+    let shutdownStarted = false;
     const removeSignalHandlers = () => {
       process.removeListener("SIGINT", shutdown);
       process.removeListener("SIGTERM", shutdown);
     };
     const shutdown = () => {
+      if (shutdownStarted) return;
+      shutdownStarted = true;
       if ((global as any).auvryntStartInterval) {
         clearInterval((global as any).auvryntStartInterval);
         delete (global as any).auvryntStartInterval;
       }
+      delete (global as any).auvryntLogEmitter;
+
+      const forceClose = setTimeout(() => httpServer.closeAllConnections(), 5_000);
+      forceClose.unref();
       httpServer.close(() => {
-        removeSignalHandlers();
-        resolveServer();
+        clearTimeout(forceClose);
+        void runningServer.close().finally(() => {
+          removeSignalHandlers();
+          resolveServer();
+        });
       });
     };
     httpServer.once("error", (error) => {
       removeSignalHandlers();
-      rejectServer(error);
+      void runningServer.close().finally(() => rejectServer(error));
     });
     process.once("SIGINT", shutdown);
     process.once("SIGTERM", shutdown);
@@ -376,7 +426,7 @@ async function runDoctor(): Promise<void> {
 
   try {
     const config = loadConfig();
-    console.log(`Local MCP URL: http://${config.host}:${config.port}/mcp`);
+    console.log(`Local MCP URL: ${httpUrl(config.host, config.port, "/mcp")}`);
     console.log(`Public MCP URL: ${new URL("/mcp", config.publicBaseUrl).toString()}`);
     console.log(`Allowed roots: ${config.allowedRoots.join(", ")}`);
     console.log(`Allowed hosts: ${config.allowedHosts.join(", ")}`);
@@ -385,28 +435,60 @@ async function runDoctor(): Promise<void> {
   }
 }
 
-async function acquireInstanceLock(stateDir: string): Promise<{ release: () => Promise<void> }> {
-  const lockPath = join(stateDir, "server.lock");
-  await mkdir(stateDir, { recursive: true });
+interface InstanceLockRecord {
+  instanceId: string;
+  pid: number;
+  startedAt: string;
+  host: string;
+  port: number;
+}
 
-  for (let attempt = 0; attempt < 2; attempt++) {
+async function acquireInstanceLock(
+  stateDir: string,
+  host: string,
+  port: number,
+): Promise<{ release: () => Promise<void> }> {
+  const lockPath = join(stateDir, "server.lock");
+  await mkdir(stateDir, { recursive: true, mode: 0o700 });
+  await chmod(stateDir, 0o700).catch(() => undefined);
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const instanceId = randomBytes(16).toString("hex");
     try {
-      const handle = await open(lockPath, "wx");
-      await handle.writeFile(JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
-      return { release: () => releaseInstanceLock(handle, lockPath) };
+      const handle = await open(lockPath, "wx", 0o600);
+      const record: InstanceLockRecord = {
+        instanceId,
+        pid: process.pid,
+        startedAt: new Date().toISOString(),
+        host,
+        port,
+      };
+      await handle.writeFile(JSON.stringify(record));
+      await handle.sync();
+      return { release: () => releaseInstanceLock(handle, lockPath, instanceId) };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
 
-      let ownerPid: number | undefined;
+      let lock: Partial<InstanceLockRecord> | undefined;
       try {
-        const lock = JSON.parse(await readFile(lockPath, "utf8")) as { pid?: number };
-        ownerPid = lock.pid;
+        lock = JSON.parse(await readFile(lockPath, "utf8")) as Partial<InstanceLockRecord>;
       } catch {
-        // A partially written lock is treated as stale and retried once.
+        // A partially written or malformed lock is stale unless another contender replaces it first.
       }
 
+      const ownerPid = Number.isInteger(lock?.pid) && Number(lock?.pid) > 0 ? Number(lock?.pid) : undefined;
       if (ownerPid && isProcessRunning(ownerPid)) {
-        throw new Error(`Auvrynt is already running (PID ${ownerPid}). Stop that instance before starting another.`);
+        const lockHost = typeof lock?.host === "string" ? lock.host : host;
+        const candidateLockPort = lock?.port;
+        const lockPort = Number.isInteger(candidateLockPort) ? Number(candidateLockPort) : port;
+        const healthy = await isAuvryntHealthReachable(lockHost, lockPort);
+        const lockStartedAt = lock?.startedAt;
+        const lockAgeMs = typeof lockStartedAt === "string"
+          ? Date.now() - Date.parse(lockStartedAt)
+          : Number.POSITIVE_INFINITY;
+        if (healthy || (Number.isFinite(lockAgeMs) && lockAgeMs >= 0 && lockAgeMs < 30_000)) {
+          throw new Error(`Auvrynt is already running (PID ${ownerPid}). Stop that instance before starting another.`);
+        }
       }
 
       await unlink(lockPath).catch((unlinkError) => {
@@ -415,7 +497,7 @@ async function acquireInstanceLock(stateDir: string): Promise<{ release: () => P
     }
   }
 
-  throw new Error("Could not acquire the Auvrynt server lock.");
+  throw new Error("Could not acquire the Auvrynt server lock after clearing stale lock state.");
 }
 
 function isProcessRunning(pid: number): boolean {
@@ -427,9 +509,42 @@ function isProcessRunning(pid: number): boolean {
   }
 }
 
-async function releaseInstanceLock(handle: FileHandle, lockPath: string): Promise<void> {
+async function isAuvryntHealthReachable(host: string, port: number): Promise<boolean> {
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return false;
+  if (!host || /[\/@?#]/.test(host)) return false;
+  try {
+    const response = await fetch(httpUrl(localProbeHost(host), port, "/healthz"), {
+      signal: AbortSignal.timeout(750),
+    });
+    if (!response.ok) return false;
+    const body = await response.json().catch(() => undefined) as { ok?: unknown; name?: unknown } | undefined;
+    return body?.ok === true && body?.name === "auvrynt";
+  } catch {
+    return false;
+  }
+}
+
+async function releaseInstanceLock(handle: FileHandle, lockPath: string, instanceId: string): Promise<void> {
   await handle.close().catch(() => undefined);
-  await unlink(lockPath).catch(() => undefined);
+  let raw: string;
+  try {
+    raw = await readFile(lockPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+
+  let current: { instanceId?: unknown };
+  try {
+    current = JSON.parse(raw) as { instanceId?: unknown };
+  } catch {
+    // Do not delete a lock whose ownership cannot be proven.
+    return;
+  }
+  if (current.instanceId !== instanceId) return;
+  await unlink(lockPath).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  });
 }
 
 async function startCloudflareTunnel(port: number): Promise<{ process: ChildProcess; url: string }> {
@@ -440,30 +555,49 @@ async function startCloudflareTunnel(port: number): Promise<{ process: ChildProc
   });
   const tunnelUrl = await new Promise<string>((resolveUrl, reject) => {
     let output = "";
+    let settled = false;
+    const cleanup = () => {
+      clearTimeout(timeout);
+      child.stdout?.off("data", onOutput);
+      child.stderr?.off("data", onOutput);
+      child.off("error", onError);
+      child.off("exit", onExit);
+    };
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
     const timeout = setTimeout(() => {
       child.kill();
-      reject(new Error("Cloudflare tunnel did not provide a public URL within 30 seconds."));
+      fail(new Error("Cloudflare tunnel did not provide a public URL within 30 seconds."));
     }, 30_000);
     const onOutput = (chunk: Buffer | string) => {
+      if (settled) return;
       output += chunk.toString();
+      if (output.length > 1024 * 1024) {
+        child.kill();
+        fail(new Error("Cloudflare tunnel startup output exceeded 1 MB before providing a public URL."));
+        return;
+      }
       const match = output.match(/https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/);
       if (match) {
-        clearTimeout(timeout);
+        settled = true;
+        cleanup();
         resolveUrl(match[0]);
       }
     };
+    const onError = (error: Error) => {
+      fail(new Error(`Cloudflare tunnel failed to start: ${error.message}`));
+    };
+    const onExit = (code: number | null) => {
+      if (code !== null) fail(new Error(`Cloudflare tunnel exited before connecting (code ${code}).`));
+    };
     child.stdout?.on("data", onOutput);
     child.stderr?.on("data", onOutput);
-    child.once("error", (error) => {
-      clearTimeout(timeout);
-      reject(new Error(`Cloudflare tunnel failed to start: ${error.message}`));
-    });
-    child.once("exit", (code) => {
-      if (code !== null) {
-        clearTimeout(timeout);
-        reject(new Error(`Cloudflare tunnel exited before connecting (code ${code}).`));
-      }
-    });
+    child.once("error", onError);
+    child.once("exit", onExit);
   });
 
   return { process: child, url: tunnelUrl };
@@ -498,25 +632,111 @@ function findCommand(command: string): string | undefined {
   }
 }
 
+function packageRoot(): string {
+  return resolve(dirname(fileURLToPath(import.meta.url)), "..");
+}
+
+async function ensureGodotPluginForLaunchRoot(launchRoot: string): Promise<void> {
+  const projectFile = join(launchRoot, "project.godot");
+  if (!existsSync(projectFile)) return;
+
+  const sourceDir = join(packageRoot(), "addons", "auvrynt_bridge");
+  if (!existsSync(sourceDir)) return;
+
+  const targetDir = join(launchRoot, "addons", "auvrynt_bridge");
+  await mkdir(dirname(targetDir), { recursive: true });
+  await cp(sourceDir, targetDir, { recursive: true, force: true });
+
+  const pluginPath = "res://addons/auvrynt_bridge/plugin.cfg";
+  let project = await readFile(projectFile, "utf8");
+  if (project.includes(`\"${pluginPath}\"`)) return;
+
+  const sectionPattern = /\[editor_plugins\][\s\S]*?(?=\r?\n\[[^\]]+\]|$)/;
+  const sectionMatch = project.match(sectionPattern);
+  if (sectionMatch) {
+    const section = sectionMatch[0];
+    const enabledPattern = /enabled\s*=\s*PackedStringArray\(([^)]*)\)/;
+    const enabledMatch = section.match(enabledPattern);
+    const updatedSection = enabledMatch
+      ? section.replace(enabledPattern, (_full, values: string) => {
+          const separator = values.trim() ? ", " : "";
+          return `enabled=PackedStringArray(${values}${separator}\"${pluginPath}\")`;
+        })
+      : `${section.trimEnd()}\r\nenabled=PackedStringArray(\"${pluginPath}\")\r\n`;
+    project = project.replace(section, updatedSection);
+  } else {
+    project = `${project.trimEnd()}\r\n\r\n[editor_plugins]\r\n\r\nenabled=PackedStringArray(\"${pluginPath}\")\r\n`;
+  }
+
+  await writeFile(projectFile, project, "utf8");
+}
+
+async function selfHealStartIntegrations(
+  launchRoot: string,
+  executables: Record<string, string | undefined>,
+  integrations: Record<IntegrationKey, boolean>,
+): Promise<void> {
+  if (integrations.serena) {
+    process.env.AUVRYNT_SERENA_ENABLED = "true";
+    const serenaExecutable = await ensureSerenaExecutable();
+    process.env.AUVRYNT_SERENA_EXECUTABLE = serenaExecutable;
+    execFileSync(serenaExecutable, ["--version"], { stdio: "ignore" });
+  } else {
+    process.env.AUVRYNT_SERENA_ENABLED = "false";
+  }
+
+  if (integrations.playwright) {
+    ensurePlaywrightRuntime();
+  }
+
+  if (!integrations.godotGdscript && !integrations.godotCsharp) return;
+
+  ensureGlobalGodotPlugin();
+  await ensureGodotPluginForLaunchRoot(launchRoot);
+
+  if (!existsSync(join(launchRoot, "project.godot"))) return;
+
+  let discovery = await discoverLocalIntegrations();
+  if (!discovery.ports.auvrynt_godot_bridge && !processDetected(discovery, "godot")) {
+    const godotExecutable = integrations.godotCsharp
+      ? executables.godotCsharp || executables.godot || discovery.executables.godotCsharp || discovery.executables.godot
+      : executables.godot || discovery.executables.godot;
+    if (godotExecutable && existsSync(godotExecutable)) {
+      const child = spawn(godotExecutable, ["--editor", "--path", launchRoot], {
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      child.unref();
+    }
+  }
+
+  for (let attempt = 0; attempt < 10; attempt++) {
+    discovery = await discoverLocalIntegrations();
+    if (discovery.ports.auvrynt_godot_bridge) return;
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
+  }
+}
+
 async function ensureSerenaExecutable(): Promise<string> {
   const existing = findCommand("serena");
   if (existing) return existing;
 
-  const projectRoot = resolve(process.cwd());
-  const localCandidates = [
-    join(projectRoot, "serena"),
-    join(dirname(projectRoot), "serena"),
-    join(homedir(), "Desktop", "Projectsss", "serena"),
-  ];
-  const localSource = localCandidates.find((candidate) => existsSync(join(candidate, "pyproject.toml")));
+  const configuredLocalSource = process.env.AUVRYNT_SERENA_LOCAL_SOURCE?.trim();
+  const localSource = configuredLocalSource
+    ? resolve(expandHomePath(configuredLocalSource))
+    : undefined;
+  if (localSource && !existsSync(join(localSource, "pyproject.toml"))) {
+    throw new Error(`AUVRYNT_SERENA_LOCAL_SOURCE does not contain pyproject.toml: ${localSource}`);
+  }
   const uv = await ensureUvExecutable();
 
   console.log(localSource
-    ? `Serena is not installed; installing the local checkout from ${localSource}...`
-    : "Serena is not installed; installing the official Serena package...");
+    ? `Serena is not installed; installing explicitly configured local source ${localSource}...`
+    : `Serena is not installed; installing pinned ${MANAGED_SERENA_PACKAGE}...`);
   const installArgs = localSource
     ? ["tool", "install", "--force", "--editable", localSource]
-    : ["tool", "install", "--force", "serena-agent"];
+    : ["tool", "install", "--force", MANAGED_SERENA_PACKAGE];
   execFileSync(uv, installArgs, { stdio: "inherit" });
 
   const installed = findCommand("serena") ?? findInstalledExecutable("serena");
@@ -534,8 +754,8 @@ async function ensureUvExecutable(): Promise<string> {
   if (!python) {
     throw new Error("Serena requires uv, and Python was not found to install it automatically.");
   }
-  console.log("uv is not installed; installing it for Serena...");
-  execFileSync(python, ["-m", "pip", "install", "--user", "uv"], { stdio: "inherit" });
+  console.log(`uv is not installed; installing pinned ${MANAGED_UV_PACKAGE} for Serena...`);
+  execFileSync(python, ["-m", "pip", "install", "--user", MANAGED_UV_PACKAGE], { stdio: "inherit" });
 
   const installed = findCommand("uv") ?? findInstalledExecutable("uv");
   if (!installed) {
@@ -564,15 +784,49 @@ async function installWindowsCloudflared(): Promise<string> {
     : process.arch === "ia32"
       ? "cloudflared-windows-386.exe"
       : "cloudflared-windows-amd64.exe";
-  const downloadUrl = `https://github.com/cloudflare/cloudflared/releases/latest/download/${artifact}`;
+  const releaseUrl = `https://api.github.com/repos/cloudflare/cloudflared/releases/tags/${MANAGED_CLOUDFLARED_VERSION}`;
 
-  console.log("cloudflared is not installed; downloading the official Windows binary...");
-  const response = await fetch(downloadUrl, { signal: AbortSignal.timeout(120_000) });
-  if (!response.ok) {
-    throw new Error(`Could not download cloudflared (HTTP ${response.status}). Install it from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/.`);
+  console.log(`cloudflared is not installed; downloading verified ${MANAGED_CLOUDFLARED_VERSION}...`);
+  const releaseResponse = await fetch(releaseUrl, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      "User-Agent": "auvrynt-cloudflared-installer",
+    },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!releaseResponse.ok) {
+    throw new Error(`Could not load cloudflared release metadata (HTTP ${releaseResponse.status}).`);
   }
+  const release = await releaseResponse.json() as {
+    tag_name?: unknown;
+    assets?: Array<{ name?: unknown; browser_download_url?: unknown; digest?: unknown }>;
+  };
+  if (release.tag_name !== MANAGED_CLOUDFLARED_VERSION || !Array.isArray(release.assets)) {
+    throw new Error("Cloudflared release metadata did not match the pinned release.");
+  }
+  const asset = release.assets.find((candidate) => candidate.name === artifact);
+  if (!asset || typeof asset.browser_download_url !== "string" || typeof asset.digest !== "string") {
+    throw new Error(`Cloudflared release ${MANAGED_CLOUDFLARED_VERSION} is missing ${artifact} or its SHA-256 digest.`);
+  }
+  const expectedPrefix = `https://github.com/cloudflare/cloudflared/releases/download/${MANAGED_CLOUDFLARED_VERSION}/`;
+  if (!asset.browser_download_url.startsWith(expectedPrefix) || !/^sha256:[0-9a-f]{64}$/i.test(asset.digest)) {
+    throw new Error("Cloudflared release asset metadata failed origin/digest validation.");
+  }
+
+  const response = await fetch(asset.browser_download_url, { signal: AbortSignal.timeout(120_000) });
+  if (!response.ok) {
+    throw new Error(`Could not download cloudflared (HTTP ${response.status}).`);
+  }
+  const bytes = Buffer.from(await response.arrayBuffer());
+  const actualDigest = createHash("sha256").update(bytes).digest("hex");
+  const expectedDigest = asset.digest.slice("sha256:".length).toLowerCase();
+  if (actualDigest !== expectedDigest) {
+    throw new Error("Cloudflared SHA-256 verification failed; the downloaded binary was not installed.");
+  }
+
   await mkdir(targetDir, { recursive: true });
-  await writeFile(executable, Buffer.from(await response.arrayBuffer()), { mode: 0o755 });
+  await writeFile(executable, bytes, { mode: 0o755 });
+  execFileSync(executable, ["--version"], { stdio: "ignore" });
   return executable;
 }
 
@@ -580,7 +834,7 @@ async function runStatus(): Promise<void> {
   const files = loadAuvryntFiles();
   const host = files.config.host ?? "127.0.0.1";
   const port = files.config.port ?? 49321;
-  const healthUrl = `http://${host}:${port}/healthz`;
+  const healthUrl = httpUrl(localProbeHost(host), port, "/healthz");
 
   try {
     const response = await fetch(healthUrl, { signal: AbortSignal.timeout(1500) });
@@ -594,7 +848,7 @@ async function runStatus(): Promise<void> {
   }
 
   const local = await discoverLocalIntegrations();
-  const godotPlugin = ensureGlobalGodotPlugin();
+  const godotPlugin = getGlobalGodotPluginStatus();
   const godotConfigured = Boolean(local.executables.godot || local.executables.godotCsharp || godotPlugin.installed);
   const godotRunning = processDetected(local, "godot");
   const godotStatusText = local.ports.auvrynt_godot_bridge
@@ -616,6 +870,13 @@ async function runStatus(): Promise<void> {
 
 function stateDirForFiles(files: ReturnType<typeof loadAuvryntFiles>): string {
   return resolve(expandHomePath(files.config.stateDir ?? join(homedir(), ".local", "share", "auvrynt")));
+}
+
+function runToken(): void {
+  const files = loadAuvryntFiles();
+  const token = process.env.AUVRYNT_OAUTH_OWNER_TOKEN?.trim() || files.auth.ownerToken?.trim();
+  if (!token) throw new Error("Owner token is not configured. Run `auvrynt init` first.");
+  console.log(token);
 }
 
 function runConnected(): void {
@@ -693,10 +954,13 @@ function printHelp(): void {
       "  auvrynt start           Start a Cloudflare tunnel scoped to the current directory",
       "  auvrynt serve           Start the server with verbose console logs",
       "  auvrynt init            Create or update ~/.auvrynt/config.json and auth.json",
-      "  auvrynt setup           Configure tool integrations (Serena, Godot, Blender...)",
+      "  auvrynt setup           Configure executable paths for local tools",
+      "  auvrynt enable          Enable/disable integrations one by one",
+      "  auvrynt disable         Select enabled integrations to disable with number keys",
       "  auvrynt doctor          Show config, runtime, and native dependency status",
       "  auvrynt status          Show local MCP and integration connection status",
       "  auvrynt connected       Show recently connected MCP/web-agent providers",
+      "  auvrynt token           Print the Owner token only on explicit local request",
       "  auvrynt uninstall       Remove Auvrynt configuration after confirmation",
       "  auvrynt uninstall -y    Remove Auvrynt configuration without confirmation",
       "  auvrynt config get      Print persisted config",
@@ -706,6 +970,127 @@ function printHelp(): void {
       "  AUVRYNT_PUBLIC_BASE_URL=https://example.trycloudflare.com auvrynt start",
     ].join("\n"),
   );
+}
+
+// ─── auvrynt integration toggles ──────────────────────────────────────────────
+
+function completeIntegrationsConfig(config: AuvryntIntegrationsConfig | undefined): Record<IntegrationKey, boolean> {
+  return {
+    godotGdscript: config?.godotGdscript ?? true,
+    godotCsharp: config?.godotCsharp ?? true,
+    blender: config?.blender ?? true,
+    serena: config?.serena ?? true,
+    playwright: config?.playwright ?? true,
+  };
+}
+
+function writeIntegrationConfig(integrations: Record<IntegrationKey, boolean>): void {
+  const files = loadAuvryntFiles();
+  writeAuvryntConfig({ ...files.config, integrations });
+}
+
+async function ensureIntegrationChoicesConfigured(): Promise<void> {
+  const files = loadAuvryntFiles();
+  if (files.config.integrations) return;
+
+  prompts.intro("  Auvrynt integrations  ");
+  const integrations = completeIntegrationsConfig(undefined);
+  for (const key of INTEGRATION_KEYS) {
+    const answer = await prompts.confirm({
+      message: `Enable ${INTEGRATION_LABELS[key]}?`,
+      initialValue: true,
+    });
+    if (prompts.isCancel(answer)) {
+      prompts.cancel("Integration setup cancelled.");
+      process.exit(1);
+    }
+    integrations[key] = Boolean(answer);
+  }
+
+  writeAuvryntConfig({ ...files.config, integrations });
+  prompts.outro("Saved integration choices. Change them later with `auvrynt enable` or `auvrynt disable`.");
+}
+
+async function runEnable(): Promise<void> {
+  const files = loadAuvryntFiles();
+  const integrations = completeIntegrationsConfig(files.config.integrations);
+  if (INTEGRATION_KEYS.every((key) => integrations[key])) {
+    console.log("All integrations are already enabled.");
+    return;
+  }
+
+  prompts.intro("  Enable Auvrynt integrations  ");
+  prompts.note(
+    INTEGRATION_KEYS.map((key, index) => `${index + 1}. ${INTEGRATION_LABELS[key]}  ${integrations[key] ? "[enabled]" : "[disabled]"}`).join("\n"),
+    "Integrations",
+  );
+  const picked = await prompts.text({
+    message: "Type numbers to enable, e.g. 1 3 5",
+    placeholder: "1 2 3 4 5",
+    validate: (value) => {
+      const raw = String(value ?? "").trim();
+      if (!raw) return "Enter at least one number.";
+      const values = raw.split(/[\s,]+/).map(Number);
+      if (values.some((value) => !Number.isInteger(value) || value < 1 || value > INTEGRATION_KEYS.length)) {
+        return "Use numbers from 1 to 5.";
+      }
+      if (values.every((value) => integrations[INTEGRATION_KEYS[value - 1]])) {
+        return "Choose at least one disabled integration.";
+      }
+      return undefined;
+    },
+  });
+
+  if (prompts.isCancel(picked)) {
+    prompts.cancel("Enable cancelled.");
+    return;
+  }
+
+  const pickedIndexes = Array.from(new Set(String(picked).trim().split(/[\s,]+/).map((value) => Number(value) - 1)));
+  for (const index of pickedIndexes) integrations[INTEGRATION_KEYS[index]] = true;
+  writeIntegrationConfig(integrations);
+  prompts.outro("Integration settings updated. Restart any running Auvrynt server for the change to take effect.");
+}
+
+async function runDisable(): Promise<void> {
+  const files = loadAuvryntFiles();
+  const integrations = completeIntegrationsConfig(files.config.integrations);
+  if (INTEGRATION_KEYS.every((key) => !integrations[key])) {
+    console.log("All integrations are already disabled.");
+    return;
+  }
+
+  prompts.intro("  Disable Auvrynt integrations  ");
+  prompts.note(
+    INTEGRATION_KEYS.map((key, index) => `${index + 1}. ${INTEGRATION_LABELS[key]}  ${integrations[key] ? "[enabled]" : "[disabled]"}`).join("\n"),
+    "Integrations",
+  );
+  const picked = await prompts.text({
+    message: "Type numbers to disable, e.g. 1 3 5",
+    placeholder: "1 2 3 4 5",
+    validate: (value) => {
+      const raw = String(value ?? "").trim();
+      if (!raw) return "Enter at least one number.";
+      const values = raw.split(/[\s,]+/).map(Number);
+      if (values.some((value) => !Number.isInteger(value) || value < 1 || value > INTEGRATION_KEYS.length)) {
+        return "Use numbers from 1 to 5.";
+      }
+      if (values.every((value) => !integrations[INTEGRATION_KEYS[value - 1]])) {
+        return "Choose at least one enabled integration.";
+      }
+      return undefined;
+    },
+  });
+
+  if (prompts.isCancel(picked)) {
+    prompts.cancel("Disable cancelled.");
+    return;
+  }
+
+  const pickedIndexes = Array.from(new Set(String(picked).trim().split(/[\s,]+/).map((value) => Number(value) - 1)));
+  for (const index of pickedIndexes) integrations[INTEGRATION_KEYS[index]] = false;
+  writeIntegrationConfig(integrations);
+  prompts.outro("Integration settings updated. Restart any running Auvrynt server for the change to take effect.");
 }
 
 // ─── auvrynt setup ────────────────────────────────────────────────────────────

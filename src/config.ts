@@ -1,9 +1,10 @@
+import { isIP } from "node:net";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { expandHomePath } from "./roots.js";
 import type { LoggingConfig, LogFormat, LogLevel } from "./logger.js";
 import type { OAuthConfig } from "./oauth-provider.js";
-import { loadAuvryntFiles, type AuvryntUserConfig, type AuvryntExecutablesConfig } from "./user-config.js";
+import { loadAuvryntFiles, type AuvryntUserConfig, type AuvryntExecutablesConfig, type AuvryntIntegrationsConfig } from "./user-config.js";
 
 export type ToolNamingMode = "legacy" | "short";
 export type WidgetMode = "off" | "changes" | "full";
@@ -18,17 +19,25 @@ export const SUPPORTED_SCOPES = [
   "auvrynt:software",
   "auvrynt:godot",
   "auvrynt:blender",
+  "auvrynt:blender-python",
   "auvrynt:serena",
 ] as const;
 
-export const SCOPE_DESCRIPTIONS: Record<string, string> = {
+export type AuvryntScope = (typeof SUPPORTED_SCOPES)[number];
+
+const DEFAULT_OAUTH_SCOPES: AuvryntScope[] = SUPPORTED_SCOPES.filter(
+  (scope): scope is AuvryntScope => scope !== "auvrynt:blender-python",
+);
+
+export const SCOPE_DESCRIPTIONS: Record<AuvryntScope, string> = {
   "auvrynt:read": "Inspect files, search, and perform read-only project analysis",
   "auvrynt:write": "Edit and create files",
-  "auvrynt:process": "Start and stop approved workspace processes",
+  "auvrynt:process": "Run local commands and processes with the current OS user's privileges",
   "auvrynt:web": "Use browser and web-development tools",
   "auvrynt:software": "Use software and .NET tools",
-  "auvrynt:godot": "Use Godot project tools",
-  "auvrynt:blender": "Use Blender 3D tools",
+  "auvrynt:godot": "Use Godot project and editor tools",
+  "auvrynt:blender": "Use workspace-bound Blender 3D tools",
+  "auvrynt:blender-python": "Execute arbitrary Python inside Blender (host-level capability)",
   "auvrynt:serena": "Use local Serena semantic code tools",
 };
 
@@ -61,6 +70,7 @@ export interface ServerConfig {
   logging: LoggingConfig;
   serena: SerenaServerConfig;
   executables: AuvryntExecutablesConfig;
+  integrations: Required<AuvryntIntegrationsConfig>;
 }
 
 function parsePort(value: string | number | undefined): number {
@@ -104,14 +114,43 @@ function parseAllowedHosts(value: string | string[] | undefined, derivedHosts: s
   return normalizeAllowedHosts(rawHosts, derivedHosts);
 }
 
-function normalizeAllowedHosts(rawHosts: string[], derivedHosts: string[]): string[] {
-  const hosts = rawHosts.length > 0 ? rawHosts : derivedHosts;
-  if (hosts.includes("*")) return ["*"];
-  return Array.from(new Set(hosts.map((host) => host.trim()).filter(Boolean)));
+function normalizeAllowedHost(host: string): string {
+  const trimmed = host.trim().toLowerCase();
+  if (!trimmed) throw new Error("Allowed Host entries must not be empty.");
+  if (trimmed === "*") return trimmed;
+  if (/[\/@?#]/.test(trimmed)) {
+    throw new Error(`Invalid allowed Host entry: ${host}. Use a hostname or IP address without scheme, path, query, or fragment.`);
+  }
+
+  const unbracketed = trimmed.startsWith("[") && trimmed.endsWith("]")
+    ? trimmed.slice(1, -1)
+    : trimmed;
+  const ipVersion = isIP(unbracketed);
+  if (ipVersion === 6) return `[${unbracketed}]`;
+  if (ipVersion === 4) return unbracketed;
+  if (trimmed.includes(":")) {
+    throw new Error(`Invalid allowed Host entry: ${host}. Ports are not part of the Host allowlist.`);
+  }
+  if (!/^[a-z0-9.-]+$/.test(trimmed) || trimmed.startsWith(".") || trimmed.endsWith(".")) {
+    throw new Error(`Invalid allowed Host entry: ${host}`);
+  }
+  return trimmed;
 }
 
-function parseBoolean(value: string | undefined): boolean {
-  return ["1", "true", "yes", "on"].includes(value?.toLowerCase() ?? "");
+function normalizeAllowedHosts(rawHosts: string[], derivedHosts: string[]): string[] {
+  const hosts = rawHosts.length > 0 ? rawHosts : derivedHosts;
+  if (hosts.some((host) => host.trim() === "*")) return ["*"];
+  return Array.from(new Set(hosts.map(normalizeAllowedHost)));
+}
+
+function parseBoolean(value: string | boolean | undefined, name = "boolean value"): boolean {
+  if (value === undefined) return false;
+  if (typeof value === "boolean") return value;
+
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  throw new Error(`Invalid ${name}: ${value}`);
 }
 
 function parseMinimalTools(env: NodeJS.ProcessEnv): boolean {
@@ -157,8 +196,8 @@ function parseStringList(value: string | undefined, fallback: string[]): string[
   return entries && entries.length > 0 ? entries : fallback;
 }
 
-function parsePositiveInteger(value: string | undefined, fallback: number, name: string): number {
-  if (!value) return fallback;
+function parsePositiveInteger(value: string | number | undefined, fallback: number, name: string): number {
+  if (value === undefined || value === "") return fallback;
 
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1) {
@@ -183,7 +222,6 @@ function parseLoggingConfig(env: NodeJS.ProcessEnv): LoggingConfig {
     assets: parseBoolean(env.AUVRYNT_LOG_ASSETS),
     toolCalls: env.AUVRYNT_LOG_TOOL_CALLS === undefined ? true : parseBoolean(env.AUVRYNT_LOG_TOOL_CALLS),
     shellCommands: parseBoolean(env.AUVRYNT_LOG_SHELL_COMMANDS),
-    trustProxy: parseBoolean(env.AUVRYNT_TRUST_PROXY),
   };
 }
 
@@ -205,6 +243,16 @@ function parseRequiredSecret(value: string | undefined, name: string): string {
   return secret;
 }
 
+function parseOAuthScopes(value: string | undefined): AuvryntScope[] {
+  const requested = parseStringList(value, DEFAULT_OAUTH_SCOPES);
+  const supported = new Set<string>(SUPPORTED_SCOPES);
+  const invalid = requested.filter((scope) => !supported.has(scope));
+  if (invalid.length > 0) {
+    throw new Error(`Invalid AUVRYNT_OAUTH_SCOPES: unsupported scope(s): ${invalid.join(", ")}`);
+  }
+  return Array.from(new Set(requested)) as AuvryntScope[];
+}
+
 function parseOAuthConfig(env: NodeJS.ProcessEnv, ownerToken: string | undefined): OAuthConfig {
   return {
     ownerToken: parseRequiredSecret(env.AUVRYNT_OAUTH_OWNER_TOKEN ?? ownerToken, "AUVRYNT_OAUTH_OWNER_TOKEN"),
@@ -218,7 +266,7 @@ function parseOAuthConfig(env: NodeJS.ProcessEnv, ownerToken: string | undefined
       DEFAULT_OAUTH_REFRESH_TOKEN_TTL_SECONDS,
       "AUVRYNT_OAUTH_REFRESH_TOKEN_TTL_SECONDS",
     ),
-    scopes: parseStringList(env.AUVRYNT_OAUTH_SCOPES, [...SUPPORTED_SCOPES]),
+    scopes: parseOAuthScopes(env.AUVRYNT_OAUTH_SCOPES),
     allowedRedirectHosts: parseStringList(env.AUVRYNT_OAUTH_ALLOWED_REDIRECT_HOSTS, [
       "chatgpt.com",
       "claude.ai",
@@ -242,11 +290,15 @@ function defaultAgentDir(): string {
 }
 
 function parseSerenaConfig(env: NodeJS.ProcessEnv, filesConfig: AuvryntUserConfig): SerenaServerConfig {
-  const filesSerena = (filesConfig as any).serena ?? {};
+  const filesSerena = filesConfig.serena ?? {};
+  const backend = env.AUVRYNT_SERENA_BACKEND ?? filesSerena.backend ?? "LSP";
+  if (backend !== "LSP" && backend !== "JetBrains") {
+    throw new Error(`Invalid AUVRYNT_SERENA_BACKEND: ${backend}`);
+  }
   return {
-    enabled: parseBoolean(env.AUVRYNT_SERENA_ENABLED ?? filesSerena.enabled),
+    enabled: parseBoolean(env.AUVRYNT_SERENA_ENABLED ?? filesSerena.enabled, "AUVRYNT_SERENA_ENABLED"),
     executable: env.AUVRYNT_SERENA_EXECUTABLE ?? env.AUVRYNT_SERENA_PATH ?? filesConfig.executables?.serena ?? filesSerena.executable ?? "serena",
-    backend: (env.AUVRYNT_SERENA_BACKEND ?? filesSerena.backend ?? "LSP") as "LSP" | "JetBrains",
+    backend,
     context: env.AUVRYNT_SERENA_CONTEXT ?? filesSerena.context ?? "desktop-app",
     startupTimeoutMs: parsePositiveInteger(
       env.AUVRYNT_SERENA_STARTUP_TIMEOUT ?? filesSerena.startupTimeoutMs, 30_000, "AUVRYNT_SERENA_STARTUP_TIMEOUT",
@@ -279,6 +331,22 @@ function parseExecutablesConfig(env: NodeJS.ProcessEnv, filesConfig: AuvryntUser
   };
 }
 
+function parseOptionalIntegrationBoolean(value: unknown, name: string): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === "boolean" || typeof value === "string") return parseBoolean(value, name);
+  throw new Error(`Invalid ${name}: expected boolean`);
+}
+
+function parseIntegrationsConfig(env: NodeJS.ProcessEnv, filesConfig: AuvryntUserConfig): Required<AuvryntIntegrationsConfig> {
+  const configIntegrations = filesConfig.integrations ?? {};
+  return {
+    godotGdscript: parseOptionalIntegrationBoolean(env.AUVRYNT_GODOT_GDSCRIPT_ENABLED, "AUVRYNT_GODOT_GDSCRIPT_ENABLED") ?? configIntegrations.godotGdscript ?? true,
+    godotCsharp: parseOptionalIntegrationBoolean(env.AUVRYNT_GODOT_CSHARP_ENABLED, "AUVRYNT_GODOT_CSHARP_ENABLED") ?? configIntegrations.godotCsharp ?? true,
+    blender: parseOptionalIntegrationBoolean(env.AUVRYNT_BLENDER_ENABLED, "AUVRYNT_BLENDER_ENABLED") ?? configIntegrations.blender ?? true,
+    serena: parseOptionalIntegrationBoolean(env.AUVRYNT_SERENA_ENABLED, "AUVRYNT_SERENA_ENABLED") ?? configIntegrations.serena ?? true,
+    playwright: parseOptionalIntegrationBoolean(env.AUVRYNT_PLAYWRIGHT_ENABLED, "AUVRYNT_PLAYWRIGHT_ENABLED") ?? configIntegrations.playwright ?? true,
+  };
+}
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const files = loadAuvryntFiles(env);
@@ -314,15 +382,22 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     logging: parseLoggingConfig(env),
     serena: parseSerenaConfig(env, files.config),
     executables: parseExecutablesConfig(env, files.config),
+    integrations: parseIntegrationsConfig(env, files.config),
   };
 }
 
 function parsePublicBaseUrl(value: string): string {
   const parsed = new URL(value);
-  parsed.hash = "";
-  parsed.search = "";
-  parsed.pathname = parsed.pathname.replace(/\/+$/, "");
-  return parsed.toString().replace(/\/$/, "");
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`Invalid AUVRYNT_PUBLIC_BASE_URL scheme: ${parsed.protocol}`);
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error("AUVRYNT_PUBLIC_BASE_URL must not contain embedded credentials.");
+  }
+  if ((parsed.pathname && parsed.pathname !== "/") || parsed.search || parsed.hash) {
+    throw new Error("AUVRYNT_PUBLIC_BASE_URL must be an origin only (scheme, host, and optional port). Do not include a path, query, or fragment.");
+  }
+  return parsed.origin;
 }
 
 function localPublicBaseUrl(host: string, port: number): string {

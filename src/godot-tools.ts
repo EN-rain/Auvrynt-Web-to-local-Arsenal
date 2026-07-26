@@ -294,36 +294,53 @@ export async function inspectGodotScene(
   };
 }
 
-export function ensureGlobalGodotPlugin(): { installed: boolean; targetPath: string } {
-  let targetDir: string;
+function globalGodotPluginTarget(): string {
   if (process.platform === "win32") {
     const appData = process.env.APPDATA || join(homedir(), "AppData", "Roaming");
-    targetDir = join(appData, "Godot", "editor_plugins", "auvrynt_bridge");
-  } else if (process.platform === "darwin") {
-    targetDir = join(homedir(), "Library", "Application Support", "Godot", "editor_plugins", "auvrynt_bridge");
-  } else {
-    targetDir = join(homedir(), ".config", "godot", "editor_plugins", "auvrynt_bridge");
+    return join(appData, "Godot", "editor_plugins", "auvrynt_bridge");
   }
+  if (process.platform === "darwin") {
+    return join(homedir(), "Library", "Application Support", "Godot", "editor_plugins", "auvrynt_bridge");
+  }
+  return join(homedir(), ".config", "godot", "editor_plugins", "auvrynt_bridge");
+}
 
+function globalGodotPluginSource(): string | undefined {
   const candidateSourceDirs: string[] = [];
   try {
     const __filename = fileURLToPath(import.meta.url);
     const __dirname = dirname(__filename);
     candidateSourceDirs.push(join(__dirname, "..", "addons", "auvrynt_bridge"));
-  } catch {}
-  candidateSourceDirs.push(join(process.cwd(), "addons", "auvrynt_bridge"));
-
-  const sourceDir = candidateSourceDirs.find((d) => existsSync(d));
-  if (!sourceDir) {
-    return { installed: false, targetPath: targetDir };
+  } catch {
+    // Fall through to the development checkout candidate.
   }
+  candidateSourceDirs.push(join(process.cwd(), "addons", "auvrynt_bridge"));
+  return candidateSourceDirs.find((candidate) =>
+    existsSync(join(candidate, "plugin.cfg")) && existsSync(join(candidate, "auvrynt_bridge.gd"))
+  );
+}
+
+export function getGlobalGodotPluginStatus(): { installed: boolean; targetPath: string } {
+  const targetPath = globalGodotPluginTarget();
+  return {
+    targetPath,
+    installed:
+      existsSync(join(targetPath, "plugin.cfg")) &&
+      existsSync(join(targetPath, "auvrynt_bridge.gd")),
+  };
+}
+
+export function ensureGlobalGodotPlugin(): { installed: boolean; targetPath: string } {
+  const targetPath = globalGodotPluginTarget();
+  const sourceDir = globalGodotPluginSource();
+  if (!sourceDir) return { installed: false, targetPath };
 
   try {
-    mkdirSync(targetDir, { recursive: true });
-    cpSync(sourceDir, targetDir, { recursive: true, force: true });
-    return { installed: true, targetPath: targetDir };
+    mkdirSync(targetPath, { recursive: true });
+    cpSync(sourceDir, targetPath, { recursive: true, force: true });
+    return getGlobalGodotPluginStatus();
   } catch {
-    return { installed: false, targetPath: targetDir };
+    return { installed: false, targetPath };
   }
 }
 

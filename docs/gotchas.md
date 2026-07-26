@@ -118,7 +118,7 @@ AUVRYNT_OAUTH_ALLOWED_REDIRECT_HOSTS="chatgpt.com,example.com" npx auvrynt start
 
 ## Owner Password Not Accepted
 
-Make sure you are entering the Owner password from:
+Make sure you are entering the Owner token from:
 
 ```text
 ~/.auvrynt/auth.json

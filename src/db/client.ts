@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
@@ -18,8 +18,20 @@ export function databasePath(stateDir: string): string {
 }
 
 export function openDatabase(stateDir: string): DatabaseHandle {
-  mkdirSync(stateDir, { recursive: true });
-  const sqlite = new Database(databasePath(stateDir));
+  mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  try {
+    chmodSync(stateDir, 0o700);
+  } catch {
+    // Best effort on platforms/filesystems without POSIX permission bits.
+  }
+
+  const path = databasePath(stateDir);
+  const sqlite = new Database(path);
+  try {
+    chmodSync(path, 0o600);
+  } catch {
+    // The containing state directory is still private when chmod is unavailable.
+  }
   sqlite.pragma("journal_mode = WAL");
   sqlite.pragma("foreign_keys = ON");
 
