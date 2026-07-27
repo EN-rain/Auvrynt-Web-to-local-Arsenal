@@ -38,7 +38,27 @@ export const loadedAgentFiles = sqliteTable(
   ],
 );
 
+export const artifacts = sqliteTable(
+  "artifacts",
+  {
+    id: text("id").primaryKey(),
+    workspaceSessionId: text("workspace_session_id")
+      .notNull()
+      .references(() => workspaceSessions.id, { onDelete: "cascade" }),
+    path: text("path").notNull(),
+    mimeType: text("mime_type"),
+    toolName: text("tool_name"),
+    sizeBytes: text("size_bytes"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    index("artifacts_workspace_idx").on(table.workspaceSessionId, table.createdAt),
+  ],
+);
+
 export type WorkspaceSessionRow = typeof workspaceSessions.$inferSelect;
 export type NewWorkspaceSessionRow = typeof workspaceSessions.$inferInsert;
 export type LoadedAgentFileRow = typeof loadedAgentFiles.$inferSelect;
 export type NewLoadedAgentFileRow = typeof loadedAgentFiles.$inferInsert;
+export type ArtifactRow = typeof artifacts.$inferSelect;
+export type NewArtifactRow = typeof artifacts.$inferInsert;

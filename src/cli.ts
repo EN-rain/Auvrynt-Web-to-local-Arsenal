@@ -44,7 +44,7 @@ import {
 } from "./background-lifecycle.js";
 
 
-type Command = "serve" | "init" | "doctor" | "status" | "connected" | "token" | "uninstall" | "config" | "setup" | "enable" | "disable" | "add" | "stop" | "restart" | "help";
+type Command = "serve" | "init" | "doctor" | "status" | "connected" | "token" | "uninstall" | "config" | "setup" | "enable" | "disable" | "add" | "change" | "stop" | "restart" | "help";
 const require = createRequire(import.meta.url);
 const SUPPORTED_NODE_RANGE = ">=20.12 <27";
 const MANAGED_SERENA_PACKAGE = "serena-agent==1.6.0";
@@ -169,17 +169,28 @@ async function main(argv: string[]): Promise<void> {
     case "add":
       await runAdd(args);
       return;
+    case "change":
+      {
+        if (args.length > 0) throw new Error("Usage: auvrynt change");
+        const launchRoot = resolve(process.cwd());
+        process.env.AUVRYNT_ALLOWED_ROOTS = launchRoot;
+        process.env.AUVRYNT_WORKTREE_ROOT = launchRoot;
+        await ensureConfigured({ directoryScoped: true });
+        await runChangeWorkspace(launchRoot);
+      }
+      return;
     case "stop":
       await runStop();
       return;
     case "restart":
       {
-        const restartRequest = parseStartRequest(args);
+        const hard = args[0]?.toLowerCase() === "hard";
+        const restartRequest = parseStartRequest(hard ? args.slice(1) : args);
         const launchRoot = resolve(process.cwd());
         process.env.AUVRYNT_ALLOWED_ROOTS = launchRoot;
         process.env.AUVRYNT_WORKTREE_ROOT = launchRoot;
         await ensureConfigured({ directoryScoped: true });
-        await runRestart(restartRequest, launchRoot);
+        await runRestart(restartRequest, launchRoot, hard);
       }
       return;
     case "help":
@@ -192,7 +203,7 @@ function normalizeCommand(command: string | undefined): Command {
   if (!command || command === "serve" || command === "start") return "serve";
   if (command === "init" || command === "doctor" || command === "config") return command;
   if (command === "status" || command === "connected" || command === "token" || command === "uninstall") return command;
-  if (command === "setup" || command === "enable" || command === "disable" || command === "add" || command === "stop" || command === "restart") return command;
+  if (command === "setup" || command === "enable" || command === "disable" || command === "add" || command === "change" || command === "stop" || command === "restart") return command;
   if (command === "help" || command === "--help" || command === "-h") return "help";
   throw new Error(`Unknown command: ${command}`);
 }
@@ -276,7 +287,7 @@ async function stopManagedTunnel(stateDir: string, port: number): Promise<boolea
   }
   try {
     if (process.platform === "win32") {
-      execFileSync("taskkill.exe", ["/PID", String(tunnel.pid), "/F"], { stdio: "ignore" });
+      execFileSync("taskkill.exe", ["/PID", String(tunnel.pid), "/F"], { stdio: "ignore", windowsHide: true });
     } else {
       process.kill(tunnel.pid, "SIGTERM");
     }
@@ -338,7 +349,7 @@ async function updateActiveProfiles(
 async function terminateRootProcess(pid: number): Promise<void> {
   try {
     if (process.platform === "win32") {
-      execFileSync("taskkill.exe", ["/PID", String(pid), "/F"], { stdio: "ignore" });
+      execFileSync("taskkill.exe", ["/PID", String(pid), "/F"], { stdio: "ignore", windowsHide: true });
     } else {
       process.kill(pid, "SIGTERM");
     }
@@ -594,12 +605,75 @@ async function runStop(): Promise<void> {
   ], "Start again: auvrynt start");
 }
 
-async function runRestart(request: StartRequest, launchRoot: string): Promise<void> {
-  const active = await readActiveInstance();
-  const profiles = request.profiles ?? active?.record.profiles;
-  if (!profiles) await ensureIntegrationChoicesConfigured();
-  await runStop();
-  await runBackgroundStart({ ...request, profiles, replace: true, backgroundChild: false }, launchRoot);
+async function runRestart(request: StartRequest, launchRoot: string, hard: boolean): Promise<void> {
+  if (hard) {
+    const active = await readActiveInstance();
+    const profiles = request.profiles ?? active?.record.profiles;
+    if (!profiles) await ensureIntegrationChoicesConfigured();
+    await runStop();
+    await runBackgroundStart({ ...request, profiles, replace: true, backgroundChild: false }, launchRoot);
+    return;
+  }
+
+  const config = loadConfig();
+  const management = await acquireManagementLock(config.stateDir);
+  try {
+    const active = await readActiveInstance();
+    if (!active) throw new Error("Auvrynt is not running. Use `auvrynt start` instead.");
+
+    const profiles = request.profiles ?? active.record.profiles
+      ?? INTEGRATION_KEYS.filter((key) => completeIntegrationsConfig(loadAuvryntFiles().config.integrations)[key]);
+    const restartRoot = resolve(active.record.launchRoot ?? launchRoot);
+    process.env.AUVRYNT_ALLOWED_ROOTS = restartRoot;
+    process.env.AUVRYNT_WORKTREE_ROOT = restartRoot;
+
+    const tunnelBefore = await adoptLegacyManagedTunnel(active)
+      ?? await readManagedTunnel(active.stateDir, active.record.port);
+    await stopActiveInstance(active);
+    await runBackgroundStartUnlocked(
+      { ...request, profiles, replace: true, backgroundChild: false },
+      restartRoot,
+    );
+    const tunnelAfter = await readManagedTunnel(config.stateDir, config.port);
+    if (tunnelBefore && tunnelAfter && tunnelBefore.url !== tunnelAfter.url) {
+      printConsolePanel("Cloudflare tunnel replaced", [
+        { label: "Public MCP", value: `${tunnelAfter.url}/mcp` },
+      ], "The previous tunnel process was no longer healthy");
+    }
+  } finally {
+    await management.release();
+  }
+}
+
+async function runChangeWorkspace(launchRoot: string): Promise<void> {
+  const config = loadConfig();
+  const management = await acquireManagementLock(config.stateDir);
+  try {
+    const active = await readActiveInstance();
+    if (!active) throw new Error("Auvrynt is not running. Use `auvrynt start` in this directory instead.");
+
+    const currentRoot = resolve(active.record.launchRoot ?? launchRoot);
+    const sameRoot = process.platform === "win32"
+      ? currentRoot.toLowerCase() === launchRoot.toLowerCase()
+      : currentRoot === launchRoot;
+    if (sameRoot) {
+      const tunnel = await readManagedTunnel(active.stateDir, active.record.port);
+      printConsolePanel("Auvrynt workspace unchanged", [
+        { label: "Workspace", value: launchRoot },
+        ...(tunnel ? [{ label: "Public MCP", value: `${tunnel.url}/mcp` }] : []),
+      ]);
+      return;
+    }
+
+    const profiles = active.record.profiles
+      ?? INTEGRATION_KEYS.filter((key) => completeIntegrationsConfig(loadAuvryntFiles().config.integrations)[key]);
+    await runBackgroundStartUnlocked(
+      { profiles, replace: true, backgroundChild: false },
+      launchRoot,
+    );
+  } finally {
+    await management.release();
+  }
 }
 
 async function runAdd(args: string[]): Promise<void> {
@@ -918,6 +992,35 @@ async function serve(): Promise<void> {
       console.log("auth: Owner token approval required");
       console.log(`logging: ${config.logging.level} ${config.logging.format}`);
     }
+    httpServer.requestTimeout = 0;
+    httpServer.headersTimeout = 0;
+    httpServer.keepAliveTimeout = 0;
+
+    if (config.publicBaseUrl && /^https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com$/.test(config.publicBaseUrl)) {
+      const tunnelCheckInterval = setInterval(async () => {
+        try {
+          const response = await fetch(`${config.publicBaseUrl}/healthz`, {
+            signal: AbortSignal.timeout(10_000),
+          });
+          if (!response.ok) {
+            console.warn(`\n[auvrynt] Tunnel health check: HTTP ${response.status}`);
+          }
+        } catch {
+          try {
+            const localResponse = await fetch(httpUrl(config.host, config.port, "/healthz"), {
+              signal: AbortSignal.timeout(2_000),
+            });
+            if (localResponse.ok) {
+              console.warn(`\n[auvrynt] Tunnel appears unreachable (local server is healthy). The 502 errors will resolve when cloudflared reconnects.`);
+            }
+          } catch {
+            // Local server also unreachable — likely a full crash, not just tunnel
+          }
+        }
+      }, 60_000);
+      tunnelCheckInterval.unref();
+      (global as any).auvryntTunnelCheckInterval = tunnelCheckInterval;
+    }
   });
 
     let shutdownStarted = false;
@@ -931,6 +1034,10 @@ async function serve(): Promise<void> {
       if ((global as any).auvryntStartInterval) {
         clearInterval((global as any).auvryntStartInterval);
         delete (global as any).auvryntStartInterval;
+      }
+      if ((global as any).auvryntTunnelCheckInterval) {
+        clearInterval((global as any).auvryntTunnelCheckInterval);
+        delete (global as any).auvryntTunnelCheckInterval;
       }
       delete (global as any).auvryntLogEmitter;
 
@@ -1453,13 +1560,11 @@ async function runStatus(): Promise<void> {
   });
 
   if (profileSet.has("blender")) {
-    const blenderConnected = local.ports.blender_lab_mcp || local.ports.auvrynt_blender_bridge;
+    const blenderConnected = local.ports.blender_lab_mcp;
     const blenderDetail = local.ports.blender_lab_mcp
       ? "Blender MCP connected on 9876"
-      : local.ports.auvrynt_blender_bridge
-      ? "Auvrynt Blender bridge connected on 49323"
       : processDetected(local, "blender")
-      ? "Blender is running; waiting for MCP on 9876 or bridge on 49323"
+      ? "Blender is running; waiting for Blender Lab MCP on 9876"
       : "Blender is not detected";
     rows.push({ label: "Blender", value: `${blenderConnected ? "Connected" : "Offline"} - ${blenderDetail}` });
   }
@@ -1500,6 +1605,7 @@ function runToken(args: string[]): void {
     }
     const token = generateOwnerToken();
     writeAuvryntAuth({ ownerToken: token });
+    rmSync(join(stateDirForFiles(files), "oauth-state.json"), { force: true });
     printConsolePanel("Owner token reset", [
       { label: "Token", value: token },
     ], "Apply it: auvrynt restart");
@@ -1592,8 +1698,10 @@ function printHelp(): void {
       "  auvrynt start web,model      Start a multiple-integration combo",
       "  auvrynt start ... --replace  Live-replace profiles, or change the managed workspace",
       "  auvrynt add web         Add profiles live without restarting the server or tunnel",
+      "  auvrynt change          Switch the running workspace to the current directory",
       "  auvrynt stop            Stop Auvrynt and its Cloudflare tunnel",
-      "  auvrynt restart [combo] Stop then start with the active integration combo",
+      "  auvrynt restart [combo] Restart only Auvrynt; keep the current tunnel URL",
+      "  auvrynt restart hard    Stop and start Auvrynt plus the Cloudflare tunnel",
       "  auvrynt serve           Start the server with verbose console logs",
       "  auvrynt init            Create or update ~/.auvrynt/config.json and auth.json",
       "  auvrynt setup           Configure executable paths for local tools",

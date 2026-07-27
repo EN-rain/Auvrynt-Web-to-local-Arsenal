@@ -75,7 +75,15 @@ export async function loadPlaywright(): Promise<any> {
   if (!resolved) {
     throw new Error("Playwright is not installed.");
   }
-  return import(pathToFileURL(resolved.path).href);
+  return normalizePlaywrightModule(await import(pathToFileURL(resolved.path).href));
+}
+
+export function normalizePlaywrightModule(imported: any): any {
+  const playwright = imported?.chromium ? imported : imported?.default;
+  if (!playwright?.chromium?.launch) {
+    throw new Error("Playwright loaded, but its Chromium launcher is unavailable.");
+  }
+  return playwright;
 }
 
 export function ensurePlaywrightRuntime(): PlaywrightRuntimeStatus {
@@ -95,7 +103,7 @@ export function ensurePlaywrightRuntime(): PlaywrightRuntimeStatus {
         "--ignore-scripts",
         `playwright@${PLAYWRIGHT_VERSION}`,
       ],
-      { stdio: "inherit" },
+      { stdio: "inherit", windowsHide: true },
     );
     status = getPlaywrightRuntimeStatus();
   }
@@ -109,7 +117,7 @@ export function ensurePlaywrightRuntime(): PlaywrightRuntimeStatus {
     if (!existsSync(cliPath)) {
       throw new Error(`Playwright CLI was not found at ${cliPath}.`);
     }
-    execFileSync(process.execPath, [cliPath, "install", "chromium"], { stdio: "inherit" });
+    execFileSync(process.execPath, [cliPath, "install", "chromium"], { stdio: "inherit", windowsHide: true });
     status = getPlaywrightRuntimeStatus();
   }
 

@@ -9,8 +9,8 @@ Auvrynt extends Model Context Protocol (MCP) with tools for web application deve
 Use `get_connection_status` after `open_workspace` to automatically probe the
 authenticated MCP session, Blender, Godot, Cloudflare Tunnel, Serena, browser
 support, Chrome MCP registration, and tracked workspace processes. Blender
-detection includes the Blender Lab MCP endpoint shown in Blender preferences
-(`localhost:9876` by default) and the Auvrynt bridge (`127.0.0.1:49323`).
+scene tools connect directly to the Blender Lab MCP endpoint shown in Blender
+preferences (`localhost:9876` by default).
 Godot detection distinguishes a running Godot process from a reachable Auvrynt
 editor bridge (`127.0.0.1:49322`). Cloudflare Tunnel and Serena report whether
 their executables are installed and whether their processes are running. A

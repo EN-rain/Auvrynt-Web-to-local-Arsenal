@@ -32,6 +32,14 @@ try {
   const { workspace, agentsFiles, availableAgentsFiles } = await registry.openWorkspace(root);
 
   assert.equal(workspace.mode, "checkout");
+  const expectedArtifact = join(root, "auvrynt-logs", "playwright", "example.png");
+  assert.equal(registry.resolveArtifactPath(workspace, "example.png", "playwright"), expectedArtifact);
+  assert.equal(registry.resolveArtifactPath(workspace, "playwright/example.png", "playwright"), expectedArtifact);
+  assert.equal(registry.resolveArtifactPath(workspace, "auvrynt-logs/playwright/example.png", "playwright"), expectedArtifact);
+  assert.throws(
+    () => registry.resolveArtifactPath(workspace, "../example.png", "playwright"),
+    /outside allowed roots/i,
+  );
   assert.deepEqual(
     agentsFiles.map((file) => file.content),
     ["global instructions\n", "root instructions\n"],

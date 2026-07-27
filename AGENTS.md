@@ -23,3 +23,15 @@ Before development work:
 3. Load only the relevant guide. Do not load all guides by default.
 4. Use only tools relevant to the current task.
 5. Never invent unavailable tools or unverified results.
+
+## Troubleshooting
+
+### HTTP 502 from Playwright / browser-tools backend
+If the server returns 502 after a Playwright run, the Node.js process likely
+crashed. The server now has process-level crash handlers that log the error and
+keep the process alive for unhandled rejections. Chromium is launched with
+`--disable-gpu` to prevent GPU-driver crashes on Windows. `browser.close()` has
+an 8-second timeout to prevent hanging. To recover:
+1. Check console output for `[auvrynt] Unhandled rejection` or `[auvrynt] FATAL` messages.
+2. Check `~/.auvrynt/logs/` for event logs.
+3. Restart the server (`auvrynt start` or relaunch the CLI).

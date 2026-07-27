@@ -51,6 +51,7 @@ export function redactProcessText(text: string, environment?: Record<string, str
 export interface TrackedProcess {
   id: string;
   workspaceId: string;
+  ownerClientId?: string;
   command: string;
   workingDirectory: string;
   startTime: string;
@@ -70,6 +71,7 @@ export interface TrackedProcess {
 
 export interface StartProcessInput {
   workspaceId: string;
+  ownerClientId?: string;
   command: string;
   workingDirectory?: string;
   environment?: Record<string, string>;
@@ -168,12 +170,14 @@ export class ProcessManager {
       cwd,
       env: childEnv,
       shell: useShell,
+      windowsHide: process.platform === "win32",
       detached: process.platform !== "win32",
     });
 
     const tracked: TrackedProcess = {
       id: processId,
       workspaceId: input.workspaceId,
+      ownerClientId: input.ownerClientId,
       command: redactProcessText(command, redactionEnvironment),
       workingDirectory: cwd,
       startTime: new Date().toISOString(),
@@ -364,6 +368,20 @@ export class ProcessManager {
         force: true,
       })),
     );
+  }
+
+  stopAllProcessesForWorkspace(workspaceId: string): number {
+    const removed: string[] = [];
+    for (const [pid, tracked] of this.processes) {
+      if (tracked.workspaceId !== workspaceId) continue;
+      if (tracked.status === "running") {
+        const killed = tracked.child.kill("SIGTERM");
+        if (!killed) tracked.child.kill("SIGKILL");
+      }
+      this.processes.delete(pid);
+      removed.push(pid);
+    }
+    return removed.length;
   }
 
   getTrackedProcess(workspaceId: string, processId: string): TrackedProcess {

@@ -91,7 +91,7 @@ export async function getConnectionStatus(
   const local = await discoverLocalIntegrations();
 
   const blenderPolicy = unavailableByPolicy(
-    "Auvrynt Blender bridge",
+    "Blender Lab MCP",
     config.integrations.blender,
     scopeSet.has("auvrynt:blender"),
     timestamp,
@@ -104,9 +104,9 @@ export async function getConnectionStatus(
   } else {
     blender = {
       state: "disconnected",
-      provider: "Auvrynt Blender bridge",
-      endpoint: "127.0.0.1:49323",
-      detail: "No response from the local Blender bridge.",
+      provider: "Blender Lab MCP",
+      endpoint: `127.0.0.1:${process.env.AUVRYNT_BLENDER_MCP_PORT ?? "9876"}`,
+      detail: "No response from Blender Lab MCP.",
       checkedAt: timestamp,
     };
     try {
@@ -114,23 +114,13 @@ export async function getConnectionStatus(
         "import bpy\nresult = {'version': bpy.app.version_string}\n",
       );
       blender.state = "connected";
-      blender.detail = "Blender bridge responded. Workspace file binding is verified before scene tools run.";
+      blender.detail = "Blender Lab MCP responded. Scene inspection and workspace-bound Blender tools are ready.";
       blender.metadata = response;
     } catch (error) {
       blender.detail = error instanceof Error ? error.message : String(error);
     }
 
-    blenderLabMcp = {
-      state: local.ports.blender_lab_mcp ? "connected" : processDetected(local, "blender") ? "available" : "disconnected",
-      provider: "Blender Lab MCP",
-      endpoint: `127.0.0.1:${process.env.AUVRYNT_BLENDER_MCP_PORT ?? "9876"}`,
-      detail: local.ports.blender_lab_mcp
-        ? "Blender MCP is listening on the configured Blender Lab endpoint."
-        : processDetected(local, "blender")
-          ? "Blender is running, but its MCP endpoint is not reachable. Check Blender MCP Auto Start and port 9876."
-          : "Blender is not detected. Start Blender with the MCP extension enabled for automatic connection.",
-      checkedAt: timestamp,
-    };
+    blenderLabMcp = { ...blender };
   }
 
   const godotEnabled = config.integrations.godotGdscript || config.integrations.godotCsharp;

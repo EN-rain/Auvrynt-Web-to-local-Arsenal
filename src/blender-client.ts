@@ -2,7 +2,7 @@ import { createConnection, type Socket } from "node:net";
 
 export interface BlenderClientConfig {
   host?: string; // Default: "127.0.0.1"
-  port?: number; // Default: 49323
+  port?: number; // Default: AUVRYNT_BLENDER_MCP_PORT or Blender Lab's 9876
   timeoutMs?: number; // Default: 180000 (180s)
   longTaskTimeoutMs?: number; // Default: 7200000 (2h)
 }
@@ -17,7 +17,7 @@ export class BlenderClient {
 
   constructor(config: BlenderClientConfig = {}) {
     this.host = config.host || "127.0.0.1";
-    this.port = config.port ?? 49323;
+    this.port = config.port ?? Number(process.env.AUVRYNT_BLENDER_MCP_PORT ?? 9876);
     this.timeoutMs = config.timeoutMs ?? 180000;
     this.longTaskTimeoutMs = config.longTaskTimeoutMs ?? 7200000;
 
@@ -26,10 +26,10 @@ export class BlenderClient {
       throw new Error(`Forbidden host: ${this.host}. Only loopback connection is allowed for Blender MCP.`);
     }
     if (!Number.isInteger(this.port) || this.port < 1 || this.port > 65535) {
-      throw new Error(`Invalid Blender bridge port: ${this.port}`);
+      throw new Error(`Invalid Blender MCP port: ${this.port}`);
     }
     if (!Number.isFinite(this.timeoutMs) || this.timeoutMs < 1 || !Number.isFinite(this.longTaskTimeoutMs) || this.longTaskTimeoutMs < 1) {
-      throw new Error("Blender bridge timeouts must be positive numbers.");
+      throw new Error("Blender MCP timeouts must be positive numbers.");
     }
   }
 

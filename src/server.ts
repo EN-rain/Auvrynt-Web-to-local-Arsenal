@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { access, realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from "@modelcontextprotocol/sdk/server/auth/router.js";
@@ -43,6 +44,12 @@ import { executeViewImage } from "./view-image.js";
 import { ProcessManager, redactProcessText } from "./processes.js";
 import { getConnectionStatus } from "./connection-status.js";
 import { recordConnectedClient } from "./connection-registry.js";
+import { SessionRegistry } from "./session-registry.js";
+import { RoomRegistry } from "./room-registry.js";
+import { createShutdownCoordinator } from "./shutdown.js";
+import { getRequestContext, runWithContext, requireRequestContext } from "./request-context.js";
+import { enqueueIntegration } from "./integration-queue.js";
+import { registerToolCapability } from "./tool-capabilities.js";
 import { globFiles, searchText, inspectProject } from "./search-discovery.js";
 import { capturePageScreenshot, inspectPage, startDevServer, testResponsivePage } from "./web-tools.js";
 import { inspectImage, compareImages, inspectSprite, splitSpriteSheet } from "./image-tools.js";
@@ -307,6 +314,7 @@ const BLENDER_UNBOUND_TOOL_NAMES = new Set([
 ]);
 
 const registerAppTool = ((server: McpServer, name: string, toolConfig: unknown, handler: Function) => {
+  registerToolCapability(name);
   const guard = mcpServerGuards.get(server);
   const requiredScopes = requiredScopesForToolName(name);
   if (guard) {
@@ -329,6 +337,12 @@ const registerAppTool = ((server: McpServer, name: string, toolConfig: unknown, 
           await assertBlenderWorkspaceBound(guard.workspaces, workspaceId);
         }
       }
+    }
+    if (name.startsWith("blender_")) {
+      return enqueueIntegration("blender", () => Reflect.apply(handler, undefined, args));
+    }
+    if (name.startsWith("godot_")) {
+      return enqueueIntegration("godot", () => Reflect.apply(handler, undefined, args));
     }
     return Reflect.apply(handler, undefined, args);
   };
@@ -469,6 +483,7 @@ function serverInstructions(config: ServerConfig, toolNames: ToolNames): string 
   const devTools = `
 Process management: Use start_process for long-running servers, apps, and games that must stay running. Use get_process_logs to tail output. Use stop_process when done. Do not use ${toolNames.shell} for commands that block indefinitely.
 Web development: Use start_dev_server to launch a dev server (auto-detects npm run dev), capture_page_screenshot to capture pages with Playwright, inspect_page for structured DOM/accessibility info, test_responsive_page for multi-viewport testing. Requires Playwright; see docs/DEVELOPMENT_TOOLS.md.
+Generated artifacts: Screenshots, image diffs, sprite frames, application captures, Godot exports, Blender exports, and Blender checkpoints are stored under the workspace's auvrynt-logs directory. Output path arguments are organized into tool-specific subdirectories there. Ordinary source-file edits and generated project source code remain at their requested project paths.
 Project discovery: Use inspect_project to detect project type, package manager, and recommended commands. Use glob_files and search_text for structured file search across the workspace.
 Image tools: Use inspect_image for dimensions/format/palette. Use compare_images for pixel-level diff. Use inspect_sprite and split_sprite_sheet for sprite sheets. Do not use view_image for analysis—use inspect_image.
 .NET tools: Use inspect_dotnet_project to read project structure, dotnet_restore/dotnet_build/dotnet_test for CLI operations, dotnet_run to start a .NET app as a persistent process, dotnet_format for formatting.
@@ -757,6 +772,7 @@ function createMcpServer(
   serenaManager: SerenaManager,
   processManager: ProcessManager,
   allowedScopes: readonly string[],
+  roomRegistry: RoomRegistry,
 ): McpServer {
   const toolNames = toolNamesFor(config);
   const server = new McpServer(
@@ -940,6 +956,38 @@ function createMcpServer(
 
   registerAppTool(
     server,
+    "close_workspace",
+    {
+      title: "Close workspace",
+      description: "Explicitly close an open workspace, stopping its processes and releasing resources. Use this when done working in a workspace to ensure proper cleanup. The workspaceId will no longer be valid after this call.",
+      inputSchema: {
+        workspaceId: z.string().describe("Workspace identifier returned by open_workspace."),
+      },
+      ...toolWidgetDescriptorMeta(config, "workspace"),
+      annotations: MUTATING_ANNOTATIONS,
+    },
+    async ({ workspaceId }) => {
+      const startedAt = performance.now();
+      const room = roomRegistry.getByWorkspace(workspaceId);
+      if (room) roomRegistry.close(room.roomId);
+
+      const result = await processManager.stopAllProcessesForWorkspace(workspaceId);
+      logToolCall(config, {
+        tool: "close_workspace",
+        workspaceId,
+        success: true,
+        durationMs: Math.round(performance.now() - startedAt),
+      });
+      return {
+        content: [
+          { type: "text" as const, text: `Workspace ${workspaceId} closed. ${result} processes stopped.` },
+        ],
+      };
+    },
+  );
+
+  registerAppTool(
+    server,
     toolNames.read,
     {
       title: "Read file",
@@ -1094,15 +1142,39 @@ function createMcpServer(
           .string()
           .describe("File path to write, relative to the workspace root."),
         content: z.string().describe("Complete new file content."),
+        expectedVersion: z.string().optional().describe("Expected SHA-256 hash (hex) of the current file content. If provided and the actual file hash differs, the write is rejected to prevent overwriting concurrent changes."),
       },
       outputSchema: resultOutputSchema(),
       ...toolWidgetDescriptorMeta(config, "write"),
       annotations: WRITE_TOOL_ANNOTATIONS,
     },
-    async ({ workspaceId, ...input }) => {
+    async ({ workspaceId, expectedVersion, ...input }) => {
       const startedAt = performance.now();
       const workspace = workspaces.getWorkspace(workspaceId);
-      workspaces.resolvePath(workspace, input.path);
+      const absolutePath = workspaces.resolvePath(workspace, input.path);
+
+      if (expectedVersion) {
+        const { createHash } = await import("node:crypto");
+        const { readFile } = await import("node:fs/promises");
+        try {
+          const currentContent = await readFile(absolutePath, "utf8");
+          const currentHash = createHash("sha256").update(currentContent).digest("hex");
+          if (currentHash !== expectedVersion) {
+            logEvent(config.logging, "warn", "write_version_mismatch", {
+              path: input.path,
+              expectedVersion,
+              actualVersion: currentHash,
+            });
+            return {
+              content: [{ type: "text" as const, text: `Write rejected: file content has changed since last read. Expected version ${expectedVersion.slice(0, 12)}… but actual version is ${currentHash.slice(0, 12)}…. Re-read the file before writing.` }],
+              isError: true,
+            };
+          }
+        } catch {
+          // File doesn't exist yet — this is a new file, expectedVersion check passes.
+        }
+      }
+
       const response = await writeFileTool(input, {
         cwd: workspace.root,
         root: workspace.root,
@@ -1655,8 +1727,9 @@ function createMcpServer(
     },
     async ({ workspaceId, command, workingDirectory, environment }) => {
       const startedAt = performance.now();
+      const ctx = getRequestContext();
       try {
-        const result = processManager.startProcess({ workspaceId, command, workingDirectory, environment });
+        const result = processManager.startProcess({ workspaceId, ownerClientId: ctx?.ownerClientId, command, workingDirectory, environment });
         logToolCall(config, { tool: "start_process", workspaceId, command, success: true, durationMs: Math.round(performance.now() - startedAt) });
         return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
@@ -3258,12 +3331,15 @@ export function createServer(config = loadConfig()): RunningServer {
     host: config.host,
     ...(allowedHosts ? { allowedHosts } : {}),
   });
-  const transports = new Map<string, Transport>();
-  const mcpServers = new Map<string, McpServer>();
-  const sessionOwners = new Map<string, string>();
+  const sessionRegistry = new SessionRegistry(config);
+  const roomRegistry = new RoomRegistry();
   const mcpUrl = new URL("/mcp", config.publicBaseUrl);
   const resourceServerUrl = resourceUrlFromServerUrl(mcpUrl);
-  const oauthProvider = new SingleUserOAuthProvider(config.oauth, mcpUrl);
+  const oauthProvider = new SingleUserOAuthProvider(
+    config.oauth,
+    mcpUrl,
+    join(config.stateDir, "oauth-state.json"),
+  );
   const bearerAuth = requireBearerAuth({
     verifier: oauthProvider,
     requiredScopes: [],
@@ -3288,19 +3364,40 @@ export function createServer(config = loadConfig()): RunningServer {
   let activeToolCalls = 0;
   let reconfiguring = false;
 
+  process.on("unhandledRejection", (reason) => {
+    logEvent(config.logging, "error", "process_unhandled_rejection", {
+      error: reason instanceof Error ? reason.message : String(reason),
+      stack: reason instanceof Error ? reason.stack : undefined,
+    });
+    console.error("\n[auvrynt] Unhandled rejection — server continuing. Reason:", reason instanceof Error ? reason.message : reason);
+  });
+
+  process.on("uncaughtException", (error) => {
+    logEvent(config.logging, "error", "process_uncaught_exception", {
+      error: error.message,
+      stack: error.stack,
+    });
+    console.error("\n[auvrynt] FATAL: Uncaught exception:", error);
+    console.error("[auvrynt] Keeping process alive to avoid 502 from origin outage.");
+  });
+
   const closeMcpSessions = async (): Promise<number> => {
-    const servers = Array.from(new Set(mcpServers.values()));
-    mcpServers.clear();
-    transports.clear();
-    sessionOwners.clear();
-    await Promise.allSettled(servers.map((server) => server.close()));
-    return servers.length;
+    const records = sessionRegistry.allRecords().filter(
+      (r) => r.state === "active" || r.state === "disconnected",
+    );
+    for (const record of records) {
+      record.state = "closing";
+    }
+    await Promise.allSettled(records.map((r) => r.mcpServer.close()));
+    return records.length;
   };
 
   // Auvrynt is commonly exposed through a local reverse proxy/tunnel (for example Cloudflare).
   // Only loopback proxies are trusted. Never switch this to boolean `true`: that would let a
   // direct remote client spoof forwarding headers and undermine IP-based rate limits/logging.
   app.set("trust proxy", "loopback");
+
+  app.use(express.json({ limit: "4mb" }));
 
   app.use((req, res, next) => {
     const requestId = randomUUID();
@@ -3432,8 +3529,8 @@ export function createServer(config = loadConfig()): RunningServer {
     }
 
     if (sessionId) {
-      const ownerClientId = sessionOwners.get(sessionId);
-      if (ownerClientId && ownerClientId !== req.auth.clientId) {
+      const record = sessionRegistry.get(sessionId);
+      if (record && record.ownerClientId !== req.auth.clientId) {
         logEvent(config.logging, "warn", "auth_denied", {
           requestId,
           reason: "mcp_session_owner_mismatch",
@@ -3474,13 +3571,24 @@ export function createServer(config = loadConfig()): RunningServer {
       let transport: Transport | undefined;
 
       if (sessionId) {
-        transport = transports.get(sessionId);
-        if (!transport) {
+        const record = sessionRegistry.get(sessionId);
+        if (!record) {
           sendJsonRpcError(res, 404, -32000, "Unknown MCP session");
           return;
         }
+        if (record.state === "expired") {
+          sendJsonRpcError(res, 404, -32000, "MCP session has expired");
+          return;
+        }
+        if (record.state === "closing") {
+          sendJsonRpcError(res, 503, -32000, "MCP session is closing");
+          return;
+        }
+        record.state = "active";
+        record.lastActivityAt = Date.now();
+        transport = record.transport;
       } else if (initializeRequest) {
-        if (transports.size >= MAX_MCP_SESSIONS) {
+        if (sessionRegistry.activeCount() >= MAX_MCP_SESSIONS) {
           sendJsonRpcError(res, 503, -32000, "MCP session capacity reached");
           return;
         }
@@ -3489,9 +3597,10 @@ export function createServer(config = loadConfig()): RunningServer {
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (newSessionId) => {
-            if (transport) transports.set(newSessionId, transport);
-            if (mcpServer) mcpServers.set(newSessionId, mcpServer);
-            sessionOwners.set(newSessionId, req.auth!.clientId);
+            sessionRegistry.create(transport!, mcpServer!, req.auth!.clientId);
+            const record = sessionRegistry.get(newSessionId)!;
+            record.state = "active";
+
             logEvent(config.logging, "info", "mcp_session_created", {
               requestId,
               sessionIdPrefix: sessionIdPrefix(newSessionId),
@@ -3503,9 +3612,7 @@ export function createServer(config = loadConfig()): RunningServer {
         transport.onclose = () => {
           const closedSessionId = transport?.sessionId;
           if (closedSessionId) {
-            transports.delete(closedSessionId);
-            mcpServers.delete(closedSessionId);
-            sessionOwners.delete(closedSessionId);
+            sessionRegistry.remove(closedSessionId);
             logEvent(config.logging, "info", "mcp_session_closed", {
               sessionIdPrefix: sessionIdPrefix(closedSessionId),
             });
@@ -3519,6 +3626,7 @@ export function createServer(config = loadConfig()): RunningServer {
           serenaManager,
           processManager,
           authScopes,
+          roomRegistry,
         );
         await mcpServer.connect(transport);
       } else {
@@ -3526,7 +3634,18 @@ export function createServer(config = loadConfig()): RunningServer {
         return;
       }
 
-      await transport.handleRequest(req, res, req.body);
+      const actualSessionId = sessionId ?? transport?.sessionId;
+      if (actualSessionId) {
+        const ctx = {
+          sessionId: actualSessionId,
+          ownerClientId: req.auth!.clientId,
+          authScopes: authScopes,
+        };
+        await runWithContext(ctx, () => transport!.handleRequest(req, res, req.body));
+        sessionRegistry.touch(actualSessionId);
+      } else {
+        await transport!.handleRequest(req, res, req.body);
+      }
     } catch (error) {
       logEvent(config.logging, "error", "mcp_request_error", {
         requestId,
@@ -3551,8 +3670,20 @@ export function createServer(config = loadConfig()): RunningServer {
       next(error);
       return;
     }
+    if (error instanceof SyntaxError && "body" in error) {
+      res.status(400).json({ error: "Invalid JSON body" });
+      return;
+    }
     res.status(500).json({ error: "Internal server error" });
   });
+
+  const shutdownCoordinator = createShutdownCoordinator(
+    config,
+    sessionRegistry,
+    processManager,
+    serenaManager,
+    workspaceStore,
+  );
 
   let closed = false;
   return {
@@ -3590,15 +3721,7 @@ export function createServer(config = loadConfig()): RunningServer {
     async close(): Promise<void> {
       if (closed) return;
       closed = true;
-
-      await closeMcpSessions();
-      await Promise.allSettled([
-        serenaManager.stopAllSessions(),
-        processManager.stopAllProcesses(),
-      ]);
-      disconnectAllGodotEditorBridges();
-      clearBlenderClients();
-      workspaceStore.close?.();
+      await shutdownCoordinator.shutdown();
     },
   };
 }
@@ -3613,7 +3736,7 @@ async function isMainModule(): Promise<boolean> {
 
 if (await isMainModule()) {
   const { app, config } = createServer();
-  app.listen(config.port, config.host, () => {
+  const httpServer = app.listen(config.port, config.host, () => {
     console.log(
       `auvrynt listening on http://${config.host}:${config.port}/mcp`,
     );
@@ -3624,4 +3747,7 @@ if (await isMainModule()) {
     console.log(`asset logging: ${config.logging.assets ? "enabled" : "disabled"}`);
     console.log("trust proxy: loopback only");
   });
+  httpServer.requestTimeout = 0;
+  httpServer.headersTimeout = 0;
+  httpServer.keepAliveTimeout = 0;
 }

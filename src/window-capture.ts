@@ -22,7 +22,7 @@ export async function captureWindow(
   input: CaptureWindowInput,
 ): Promise<ToolResponse> {
   const workspace = registry.getWorkspace(input.workspaceId);
-  const absoluteOutputPath = registry.resolvePath(workspace, input.outputPath);
+  const absoluteOutputPath = registry.resolveArtifactPath(workspace, input.outputPath, "captures");
 
   if (process.platform !== "win32") {
     return {

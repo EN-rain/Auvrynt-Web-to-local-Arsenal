@@ -90,7 +90,12 @@ auvrynt start
 
 # Check or stop the background instance
 auvrynt status
+auvrynt restart
 auvrynt stop
+
+# Switch the running workspace to this directory
+cd C:\path\to\another-project
+auvrynt change
 
 # Foreground server with verbose request logs
 auvrynt serve
@@ -126,7 +131,9 @@ auvrynt start se --replace
 
 Live profile changes wait until no MCP request is active, then refresh connected MCP sessions so clients can rediscover the tool list. They do not restart Auvrynt, Cloudflare, Blender, Godot, Serena, or tracked development processes. Starting with `--replace` from a different directory gracefully changes the managed workspace while preserving the tunnel.
 
-`auvrynt stop` gracefully stops Auvrynt and then its Cloudflare tunnel. It does not close Blender or Godot. Lifecycle commands are serialized, so two terminals cannot create duplicate managed instances.
+`auvrynt restart` reloads Auvrynt code while keeping the current Cloudflare tunnel and URL. `auvrynt restart hard` stops and recreates both. `auvrynt stop` gracefully stops Auvrynt and then its Cloudflare tunnel. These commands do not close Blender or Godot. Lifecycle commands are serialized, so two terminals cannot create duplicate managed instances.
+
+Generated artifacts are kept under the active workspace's `auvrynt-logs` directory instead of being scattered through the project. Playwright screenshots, responsive captures, image diffs, sprite frames, application captures, Godot exports, Blender exports, and Blender checkpoints use organized subdirectories such as `auvrynt-logs/playwright` and `auvrynt-logs/images`. Normal source edits and generated project source files still use their requested project paths.
 
 ---
 
@@ -146,6 +153,10 @@ auvrynt token
 
 It is stored locally in `~/.auvrynt/auth.json`. Keep it private and do not paste it into the MCP client itself.
 
+Client registrations and hashed authorization sessions are stored locally and survive `auvrynt restart` and `auvrynt change` while the same Cloudflare URL remains active. You should not need to approve the connector again after either command.
+
+Authorization is required again after `auvrynt restart hard`, `auvrynt stop` followed by a new start, `auvrynt token reset`, or any other change that creates a new Cloudflare URL. If a connector already reports `invalid id`, its registration was lost before persistence was enabled; remove and recreate that connector once with the current `/mcp` URL.
+
 ---
 
 ## Commands
@@ -157,11 +168,15 @@ It is stored locally in `~/.auvrynt/auth.json`. Keep it private and do not paste
 | `auvrynt start model,web` | Start selected profiles: `model`, `web`, `godotcs`, `godotgd`, `se` |
 | `auvrynt start ... --replace` | Live-replace profiles, or switch the managed workspace without changing the tunnel |
 | `auvrynt add <profiles>` | Add profiles live without restarting the server or tunnel |
+| `auvrynt change` | Switch the running workspace to the current directory while preserving profiles and tunnel URL |
+| `auvrynt restart [profiles]` | Restart only Auvrynt while preserving the current Cloudflare URL |
+| `auvrynt restart hard [profiles]` | Stop and recreate both Auvrynt and its Cloudflare tunnel |
 | `auvrynt stop` | Stop Auvrynt and its Cloudflare tunnel |
 | `auvrynt serve` | Start the server with verbose log output |
 | `auvrynt doctor` | Show your config, Node version, and dependency health |
 | `auvrynt status` | Show local MCP and integration status without modifying integration files |
 | `auvrynt token` | Print the Owner token only on explicit local request |
+| `auvrynt token reset` | Generate a new Owner token and clear saved connector authorizations |
 | `auvrynt connected` | Show recently observed ChatGPT, Kimi, Claude, or other MCP providers |
 | `auvrynt uninstall` | Remove Auvrynt configuration after confirmation |
 | `auvrynt uninstall -y` | Remove Auvrynt configuration without confirmation |

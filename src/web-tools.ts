@@ -1,7 +1,7 @@
 import { lookup } from "node:dns/promises";
 import { BlockList, isIP } from "node:net";
 import { writeFile, mkdir } from "node:fs/promises";
-import { dirname, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import type { WorkspaceRegistry } from "./workspaces.js";
 import type { ProcessManager } from "./processes.js";
 import { inspectProject } from "./search-discovery.js";
@@ -92,7 +92,7 @@ interface BrowserLike {
 
 interface PlaywrightLike {
   chromium: {
-    launch(options: { headless: boolean }): Promise<BrowserLike>;
+    launch(options: { headless: boolean; args?: string[] }): Promise<BrowserLike>;
   };
 }
 
@@ -121,7 +121,17 @@ blockedAddresses.addSubnet("2001:db8::", 32, "ipv6");
 
 const MAX_BROWSER_JOBS = 4;
 const MAX_BROWSER_DIAGNOSTICS = 100;
+const BROWSER_CLOSE_TIMEOUT_MS = 8_000;
+const LAUNCH_ARGS = ["--disable-gpu"];
 let activeBrowserJobs = 0;
+
+async function closeBrowserWithTimeout(browser: BrowserLike | undefined): Promise<void> {
+  if (!browser) return;
+  await Promise.race([
+    browser.close(),
+    new Promise<void>((_, reject) => setTimeout(() => reject(new Error(`browser.close timed out after ${BROWSER_CLOSE_TIMEOUT_MS}ms`)), BROWSER_CLOSE_TIMEOUT_MS)),
+  ]).catch(() => undefined);
+}
 
 function acquireBrowserSlot(): () => void {
   if (activeBrowserJobs >= MAX_BROWSER_JOBS) {
@@ -335,7 +345,7 @@ export async function capturePageScreenshot(
 ): Promise<ToolResponse> {
   const workspace = registry.getWorkspace(input.workspaceId);
   const validatedUrl = validateWebUrl(input.url);
-  const absoluteOutputPath = registry.resolvePath(workspace, input.outputPath);
+  const absoluteOutputPath = registry.resolveArtifactPath(workspace, input.outputPath, "playwright");
 
   let playwright: PlaywrightLike;
   try {
@@ -358,7 +368,7 @@ export async function capturePageScreenshot(
     const width = Math.min(Math.max(input.viewportWidth ?? 1280, 320), 3840);
     const height = Math.min(Math.max(input.viewportHeight ?? 800, 240), 2160);
 
-    browser = await playwright.chromium.launch({ headless: true });
+    browser = await playwright.chromium.launch({ headless: true, args: LAUNCH_ARGS });
     const context = await browser.newContext({ viewport: { width, height }, serviceWorkers: "block" });
     const blockedRequests: string[] = [];
     const safeUrl = await installRequestGuard(context, validatedUrl, blockedRequests);
@@ -402,7 +412,7 @@ export async function capturePageScreenshot(
     const msg = error instanceof Error ? error.message : String(error);
     return { content: [{ type: "text", text: `Browser screenshot failed: ${msg}` }], isError: true };
   } finally {
-    if (browser) await browser.close().catch(() => undefined);
+    await closeBrowserWithTimeout(browser);
     releaseSlot?.();
   }
 }
@@ -432,7 +442,7 @@ export async function inspectPage(
   let browser: BrowserLike | undefined;
   try {
     releaseSlot = acquireBrowserSlot();
-    browser = await playwright.chromium.launch({ headless: true });
+    browser = await playwright.chromium.launch({ headless: true, args: LAUNCH_ARGS });
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: "block" });
     const blockedRequests: string[] = [];
     const safeUrl = await installRequestGuard(context, validatedUrl, blockedRequests);
@@ -514,7 +524,7 @@ export async function inspectPage(
     const msg = error instanceof Error ? error.message : String(error);
     return { content: [{ type: "text", text: `Inspect page failed: ${msg}` }], isError: true };
   } finally {
-    if (browser) await browser.close().catch(() => undefined);
+    await closeBrowserWithTimeout(browser);
     releaseSlot?.();
   }
 }
@@ -525,7 +535,7 @@ export async function testResponsivePage(
 ): Promise<ToolResponse> {
   const workspace = registry.getWorkspace(input.workspaceId);
   const validatedUrl = validateWebUrl(input.url);
-  const outputDirectory = registry.resolvePath(workspace, input.outputDirectory);
+  const outputDirectory = registry.resolveArtifactPath(workspace, input.outputDirectory, "playwright");
   const requestedViewports = input.viewports ?? [
     { name: "mobile", width: 390, height: 844 },
     { name: "tablet", width: 768, height: 1024 },
@@ -560,7 +570,7 @@ export async function testResponsivePage(
   let browser: BrowserLike | undefined;
   try {
     releaseSlot = acquireBrowserSlot();
-    browser = await playwright.chromium.launch({ headless: true });
+    browser = await playwright.chromium.launch({ headless: true, args: LAUNCH_ARGS });
     await mkdir(outputDirectory, { recursive: true });
     const content: ToolResponse["content"] = [];
     const results: Array<{ name: string; width: number; height: number; path: string; blockedRequests: string[] }> = [];
@@ -573,7 +583,7 @@ export async function testResponsivePage(
         const page = await context.newPage();
         await page.goto(safeUrl, { waitUntil: "domcontentloaded", timeout: 15_000 });
         const buffer = await page.screenshot({ fullPage: input.fullPage ?? true, type: "png" });
-        const outputPath = registry.resolvePath(workspace, `${input.outputDirectory}/${viewport.name}.png`);
+        const outputPath = join(outputDirectory, `${viewport.name}.png`);
         await writeFile(outputPath, buffer);
         const relPath = relative(workspace.root, outputPath).replace(/\\/g, "/");
         results.push({ ...viewport, path: relPath, blockedRequests });
@@ -590,7 +600,7 @@ export async function testResponsivePage(
     const message = error instanceof Error ? error.message : String(error);
     return { content: [{ type: "text", text: `Responsive page test failed: ${message}` }], isError: true };
   } finally {
-    if (browser) await browser.close().catch(() => undefined);
+    await closeBrowserWithTimeout(browser);
     releaseSlot?.();
   }
 }

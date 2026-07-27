@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
@@ -51,6 +51,7 @@ try {
   assert.equal(compData.dimensionsMatch, true);
   assert.equal(compData.isExactByteMatch, true);
   assert.equal(compData.exactMatchPercentage, 100);
+  assert.equal((await stat(join(root, "auvrynt-logs", "images", "diff.png"))).isFile(), true);
 
   // 3. inspectSprite
   const spriteRes = await inspectSprite(registry, { workspaceId, path: "test1.png", expectedCellWidth: 32, expectedCellHeight: 32 });
@@ -68,6 +69,7 @@ try {
   });
   assert.equal(splitRes.isError, undefined);
   assert.match(splitRes.content[0].type === "text" ? splitRes.content[0].text : "", /frame_0_0\.png/);
+  assert.equal((await stat(join(root, "auvrynt-logs", "images", "frames", "frame_0_0.png"))).isFile(), true);
 } finally {
   await rm(root, { recursive: true, force: true });
 }

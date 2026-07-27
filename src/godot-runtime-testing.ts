@@ -327,7 +327,7 @@ export async function exportGodotProject(
 ): Promise<{ success: boolean; outputFiles: string[]; durationMs: number; output: string }> {
   const workspace = registry.getWorkspace(input.workspaceId);
   const projectDir = registry.resolvePath(workspace, input.projectPath);
-  const absoluteOutputPath = registry.resolvePath(workspace, input.outputPath);
+  const absoluteOutputPath = registry.resolveArtifactPath(workspace, input.outputPath, "godot");
   await mkdir(dirname(absoluteOutputPath), { recursive: true });
 
   const godotExe = process.env.GODOT_DOTNET_EXECUTABLE ?? process.env.GODOT_EXECUTABLE ?? "godot-mono";

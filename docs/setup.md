@@ -82,8 +82,16 @@ server and Cloudflare tunnel are ready. It always limits web-agent file access
 to the directory where you ran it.
 
 Use `auvrynt add web` (or another profile) to update the running instance
-without restarting the server or tunnel. Use `auvrynt stop` to stop both
-managed processes.
+without restarting the server or tunnel. Use `auvrynt restart` to reload only
+the Auvrynt server while preserving the tunnel URL, `auvrynt restart hard` to
+recreate both processes, or `auvrynt stop` to stop both managed processes.
+
+To move the running web-agent boundary to another project without changing the
+tunnel URL, open that directory and run:
+
+```powershell
+auvrynt change
+```
 
 For an independently managed stable URL, configure it and use foreground
 `auvrynt serve`:

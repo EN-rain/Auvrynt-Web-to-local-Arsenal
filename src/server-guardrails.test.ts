@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "./config.js";
@@ -57,6 +58,22 @@ try {
   assert.equal(running.config.integrations.playwright, true);
   assert.equal(toolIntegrationEnabled(running.config, "blender_get_scene_info"), true);
   assert.equal(toolIntegrationEnabled(running.config, "inspect_page"), true);
+
+  const httpServer = running.app.listen(0, "127.0.0.1");
+  try {
+    await new Promise<void>((resolveListen) => httpServer.once("listening", resolveListen));
+    const { port } = httpServer.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
+    });
+    assert.equal(response.status, 401);
+  } finally {
+    await new Promise<void>((resolveClose, rejectClose) => {
+      httpServer.close((error) => error ? rejectClose(error) : resolveClose());
+    });
+  }
 } finally {
   await running.close();
   await rm(stateDir, { recursive: true, force: true });

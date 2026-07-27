@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { WorkspaceMode, WorkspaceStore } from "./workspace-store.js";
 import { mkdir, opendir, stat } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { loadProjectContextFiles } from "@earendil-works/pi-coding-agent";
 import type { ServerConfig } from "./config.js";
 import { createManagedWorktree } from "./git-worktrees.js";
-import { assertAllowedPath, isPathInsideRoot, resolveAllowedPath } from "./roots.js";
+import { AccessDeniedError, assertAllowedPath, isPathInsideRoot, resolveAllowedPath } from "./roots.js";
 import {
   loadWorkspaceSkills,
   markSkillActivated,
@@ -62,6 +62,7 @@ export interface OpenWorkspaceInput {
 }
 
 const MAX_ACTIVE_WORKSPACES = 128;
+const ARTIFACT_DIRECTORY = "auvrynt-logs";
 
 export class WorkspaceRegistry {
   private readonly workspaces = new Map<string, Workspace>();
@@ -134,6 +135,29 @@ export class WorkspaceRegistry {
     }
 
     return absolutePath;
+  }
+
+  resolveArtifactPath(workspace: Workspace, inputPath: string, category?: string): string {
+    const normalized = inputPath.replace(/\\/g, "/").replace(/^\.\/+/, "");
+    if (
+      isAbsolute(inputPath) ||
+      /^[a-zA-Z]:\//.test(normalized) ||
+      normalized.startsWith("//") ||
+      normalized.split("/").some((segment) => segment === "..")
+    ) {
+      throw new AccessDeniedError(`Path is outside allowed roots: ${inputPath}`);
+    }
+
+    const withoutRoot = normalized === ARTIFACT_DIRECTORY
+      ? ""
+      : normalized.startsWith(`${ARTIFACT_DIRECTORY}/`)
+        ? normalized.slice(ARTIFACT_DIRECTORY.length + 1)
+        : normalized;
+    const categoryPath = category && withoutRoot !== category && !withoutRoot.startsWith(`${category}/`)
+      ? `${category}/${withoutRoot}`
+      : withoutRoot;
+    const artifactRoot = join(workspace.root, ARTIFACT_DIRECTORY);
+    return resolveAllowedPath(categoryPath || ".", artifactRoot, [artifactRoot]);
   }
 
   resolveReadPath(workspace: Workspace, inputPath: string): WorkspaceReadPath {

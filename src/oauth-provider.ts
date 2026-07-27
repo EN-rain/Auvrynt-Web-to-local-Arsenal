@@ -1,4 +1,6 @@
 import { timingSafeEqual, randomBytes, randomUUID, createHash } from "node:crypto";
+import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import type { Request, Response } from "express";
 import type { OAuthRegisteredClientsStore } from "@modelcontextprotocol/sdk/server/auth/clients.js";
 import type { OAuthServerProvider, AuthorizationParams } from "@modelcontextprotocol/sdk/server/auth/provider.js";
@@ -37,6 +39,17 @@ interface RefreshTokenRecord {
   scopes: string[];
   expiresAt: number;
   resource?: URL;
+}
+
+interface PersistedOAuthState {
+  version: 1;
+  resourceServerUrl: string;
+  clients: OAuthClientInformationFull[];
+  codes: Array<[string, Omit<AuthorizationCodeRecord, "params"> & {
+    params: Omit<AuthorizationParams, "resource"> & { resource?: string };
+  }]>;
+  accessTokens: Array<[string, Omit<AccessTokenRecord, "resource"> & { resource?: string }]>;
+  refreshTokens: Array<[string, Omit<RefreshTokenRecord, "resource"> & { resource?: string }]>;
 }
 
 const CODE_TTL_MS = 5 * 60 * 1000;
@@ -262,7 +275,15 @@ function sendAuthorizationForm(
 export class InMemoryOAuthClientsStore implements OAuthRegisteredClientsStore {
   private readonly clients = new Map<string, OAuthClientInformationFull>();
 
-  constructor(private readonly allowedRedirectHosts: string[]) {}
+  constructor(
+    private readonly allowedRedirectHosts: string[],
+    initialClients: OAuthClientInformationFull[] = [],
+    private readonly onChange?: () => void,
+  ) {
+    for (const client of initialClients) {
+      if (client.client_id) this.clients.set(client.client_id, client);
+    }
+  }
 
   getClient(clientId: string): OAuthClientInformationFull | undefined {
     return this.clients.get(clientId);
@@ -288,7 +309,12 @@ export class InMemoryOAuthClientsStore implements OAuthRegisteredClientsStore {
       response_types: client.response_types ?? ["code"],
     };
     this.clients.set(registered.client_id, registered);
+    this.onChange?.();
     return registered;
+  }
+
+  allClients(): OAuthClientInformationFull[] {
+    return [...this.clients.values()];
   }
 }
 
@@ -298,13 +324,44 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
   private readonly accessTokens = new Map<string, AccessTokenRecord>();
   private readonly refreshTokens = new Map<string, RefreshTokenRecord>();
   private readonly resourceServerUrl: URL;
+  private readonly stateFile?: string;
 
   constructor(
     private readonly config: OAuthConfig,
     resourceServerUrl: URL,
+    stateFile?: string,
   ) {
     this.resourceServerUrl = resourceUrlFromServerUrl(resourceServerUrl);
-    this.clientsStore = new InMemoryOAuthClientsStore(config.allowedRedirectHosts);
+    this.stateFile = stateFile;
+    const persisted = this.loadState();
+    this.clientsStore = new InMemoryOAuthClientsStore(
+      config.allowedRedirectHosts,
+      persisted?.clients,
+      () => this.persistState(),
+    );
+    for (const [code, record] of persisted?.codes ?? []) {
+      this.codes.set(code, {
+        ...record,
+        params: {
+          ...record.params,
+          resource: record.params.resource ? new URL(record.params.resource) : undefined,
+        },
+      });
+    }
+    for (const [tokenHash, record] of persisted?.accessTokens ?? []) {
+      this.accessTokens.set(tokenHash, {
+        ...record,
+        resource: record.resource ? new URL(record.resource) : undefined,
+      });
+    }
+    for (const [tokenHash, record] of persisted?.refreshTokens ?? []) {
+      this.refreshTokens.set(tokenHash, {
+        ...record,
+        resource: record.resource ? new URL(record.resource) : undefined,
+      });
+    }
+    this.pruneExpired();
+    this.persistState();
   }
 
   async authorize(
@@ -362,6 +419,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
       params,
       expiresAtMs: Date.now() + CODE_TTL_MS,
     });
+    this.persistState();
 
     const redirectUrl = new URL(params.redirectUri);
     redirectUrl.searchParams.set("code", code);
@@ -393,7 +451,9 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     }
 
     this.codes.delete(authorizationCode);
-    return this.issueTokens(client.client_id, record.params.scopes ?? this.config.scopes, record.params.resource);
+    const tokens = this.issueTokens(client.client_id, record.params.scopes ?? this.config.scopes, record.params.resource);
+    this.persistState();
+    return tokens;
   }
 
   async exchangeRefreshToken(
@@ -416,7 +476,9 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     }
 
     this.refreshTokens.delete(hashToken(refreshToken));
-    return this.issueTokens(client.client_id, requestedScopes, resource ?? record.resource);
+    const tokens = this.issueTokens(client.client_id, requestedScopes, resource ?? record.resource);
+    this.persistState();
+    return tokens;
   }
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
@@ -439,6 +501,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     const hashed = hashToken(request.token);
     this.accessTokens.delete(hashed);
     this.refreshTokens.delete(hashed);
+    this.persistState();
   }
 
   private validCodeRecord(
@@ -498,6 +561,46 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     for (const [tokenHash, record] of this.refreshTokens) {
       if (record.expiresAt < nowSeconds) this.refreshTokens.delete(tokenHash);
     }
+  }
+
+  private loadState(): PersistedOAuthState | undefined {
+    if (!this.stateFile) return undefined;
+    try {
+      const state = JSON.parse(readFileSync(this.stateFile, "utf8")) as PersistedOAuthState;
+      if (state.version !== 1 || state.resourceServerUrl !== this.resourceServerUrl.href) return undefined;
+      return state;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private persistState(): void {
+    if (!this.stateFile || !(this.clientsStore instanceof InMemoryOAuthClientsStore)) return;
+    const state: PersistedOAuthState = {
+      version: 1,
+      resourceServerUrl: this.resourceServerUrl.href,
+      clients: this.clientsStore.allClients(),
+      codes: [...this.codes.entries()].map(([code, record]) => [code, {
+        ...record,
+        params: {
+          ...record.params,
+          resource: record.params.resource?.href,
+        },
+      }]),
+      accessTokens: [...this.accessTokens.entries()].map(([tokenHash, record]) => [tokenHash, {
+        ...record,
+        resource: record.resource?.href,
+      }]),
+      refreshTokens: [...this.refreshTokens.entries()].map(([tokenHash, record]) => [tokenHash, {
+        ...record,
+        resource: record.resource?.href,
+      }]),
+    };
+    mkdirSync(dirname(this.stateFile), { recursive: true, mode: 0o700 });
+    const temporary = `${this.stateFile}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+    writeFileSync(temporary, JSON.stringify(state), { encoding: "utf8", mode: 0o600, flag: "wx" });
+    renameSync(temporary, this.stateFile);
+    chmodSync(this.stateFile, 0o600);
   }
 }
 

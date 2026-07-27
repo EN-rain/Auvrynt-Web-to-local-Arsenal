@@ -68,8 +68,8 @@ npx auvrynt config set publicBaseUrl https://your-tunnel-host.example.com
 ## Tunnel URL Changed
 
 The managed quick-tunnel URL stays unchanged across `auvrynt add` and
-same-directory `auvrynt start ... --replace`. It normally changes after
-`auvrynt stop` followed by a new start.
+same-directory `auvrynt start ... --replace` and `auvrynt restart`. It normally
+changes after `auvrynt restart hard` or `auvrynt stop` followed by a new start.
 
 For a stable independently managed URL, use foreground mode:
 

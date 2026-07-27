@@ -1,6 +1,5 @@
-import { mkdir, readFile, readdir, stat, unlink } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir, stat } from "node:fs/promises";
+import { dirname, join, relative, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import type { WorkspaceRegistry } from "./workspaces.js";
 import { getBlenderClient } from "./blender-client.js";
@@ -45,21 +44,22 @@ export async function assertBlenderWorkspaceBound(
   return filepath;
 }
 
-function checkpointDirectory(workspaceId: string): string {
-  const safeId = workspaceId.replace(/[^a-zA-Z0-9_-]/g, "_");
-  return join(tmpdir(), "auvrynt_blender_checkpoints", safeId);
+function checkpointDirectory(registry: WorkspaceRegistry, workspaceId: string): string {
+  const workspace = registry.getWorkspace(workspaceId);
+  return registry.resolveArtifactPath(workspace, "checkpoints", "blender");
 }
 
-// Helper to read rendered file and return image + text response
-async function imageResponse(outputPath: string, text: string): Promise<ToolResponse> {
+function artifactTimestamp(): string {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+// Helper to read a persisted render and return image + text response.
+async function imageResponse(workspaceRoot: string, outputPath: string, text: string): Promise<ToolResponse> {
   if (!existsSync(outputPath)) {
     return errorResponse(`Render succeeded but output file not found: ${outputPath}`);
   }
   const buffer = await readFile(outputPath);
-  // Clean up temp file
-  try {
-    await unlink(outputPath);
-  } catch {}
+  const relativePath = relative(workspaceRoot, outputPath).replace(/\\/g, "/");
 
   return {
     content: [
@@ -70,7 +70,7 @@ async function imageResponse(outputPath: string, text: string): Promise<ToolResp
       },
       {
         type: "text",
-        text,
+        text: `${text}\nSaved to ${relativePath}`,
       },
     ],
   };
@@ -918,12 +918,18 @@ export async function blenderRenderCamera(
   input: { workspaceId: string; cameraName?: string; width?: number; height?: number; samples?: number },
 ): Promise<ToolResponse> {
   try {
+    const workspace = registry.getWorkspace(input.workspaceId);
     const client = getBlenderClient(input.workspaceId);
     const cameraName = input.cameraName || "";
     const width = Math.max(64, Math.min(input.width ?? 1280, 4096));
     const height = Math.max(64, Math.min(input.height ?? 720, 4096));
     const samples = Math.max(1, Math.min(input.samples ?? 64, 512));
-    const outputPath = join(tmpdir(), "blender_mcp_camera_render.png");
+    const outputPath = registry.resolveArtifactPath(
+      workspace,
+      `renders/camera-${artifactTimestamp()}.png`,
+      "blender",
+    );
+    await mkdir(dirname(outputPath), { recursive: true });
 
     await client.sendExecute(
       "import bpy\n" +
@@ -954,7 +960,7 @@ export async function blenderRenderCamera(
       "result = {'path': output_path, 'camera': camera.name}\n",
     );
 
-    return imageResponse(outputPath, `Rendered camera view using ${cameraName || "active scene camera"}.`);
+    return imageResponse(workspace.root, outputPath, `Rendered camera view using ${cameraName || "active scene camera"}.`);
   } catch (err: any) {
     return errorResponse(`Render camera failed: ${err.message}`);
   }
@@ -965,12 +971,18 @@ export async function blenderRenderObjectIsolation(
   input: { workspaceId: string; objectName: string; width?: number; height?: number; samples?: number },
 ): Promise<ToolResponse> {
   try {
+    const workspace = registry.getWorkspace(input.workspaceId);
     const client = getBlenderClient(input.workspaceId);
     const width = Math.max(64, Math.min(input.width ?? 1024, 4096));
     const height = Math.max(64, Math.min(input.height ?? 1024, 4096));
     const samples = Math.max(1, Math.min(input.samples ?? 32, 512));
-    const label = input.objectName.replace(/[^a-zA-Z0-9]/g, "_");
-    const outputPath = join(tmpdir(), `blender_mcp_isolate_${label}.png`);
+    const label = input.objectName.replace(/[^a-zA-Z0-9_-]/g, "_") || "object";
+    const outputPath = registry.resolveArtifactPath(
+      workspace,
+      `renders/isolate-${label}-${artifactTimestamp()}.png`,
+      "blender",
+    );
+    await mkdir(dirname(outputPath), { recursive: true });
 
     await client.sendExecute(
       "import bpy\n" +
@@ -1000,7 +1012,7 @@ export async function blenderRenderObjectIsolation(
       "result = {'path': output_path, 'object': target.name}\n",
     );
 
-    return imageResponse(outputPath, `Rendered isolated object: ${input.objectName}.`);
+    return imageResponse(workspace.root, outputPath, `Rendered isolated object: ${input.objectName}.`);
   } catch (err: any) {
     return errorResponse(`Render object isolation failed: ${err.message}`);
   }
@@ -1011,10 +1023,16 @@ export async function blenderRenderViewport(
   input: { workspaceId: string; width?: number; height?: number },
 ): Promise<ToolResponse> {
   try {
+    const workspace = registry.getWorkspace(input.workspaceId);
     const client = getBlenderClient(input.workspaceId);
     const width = Math.max(64, Math.min(input.width ?? 1280, 4096));
     const height = Math.max(64, Math.min(input.height ?? 720, 4096));
-    const outputPath = join(tmpdir(), "blender_mcp_viewport.png");
+    const outputPath = registry.resolveArtifactPath(
+      workspace,
+      `captures/viewport-${artifactTimestamp()}.png`,
+      "blender",
+    );
+    await mkdir(dirname(outputPath), { recursive: true });
 
     await client.sendExecute(
       "import bpy\n" +
@@ -1026,7 +1044,7 @@ export async function blenderRenderViewport(
       "result = {'path': output_path}\n",
     );
 
-    return imageResponse(outputPath, "Captured viewport screenshot.");
+    return imageResponse(workspace.root, outputPath, "Captured viewport screenshot.");
   } catch (err: any) {
     return errorResponse(`Render viewport failed: ${err.message}`);
   }
@@ -1042,7 +1060,7 @@ export async function blenderSaveCheckpoint(
     await assertBlenderWorkspaceBound(registry, input.workspaceId);
     const client = getBlenderClient(input.workspaceId);
     const label = (input.label || "checkpoint").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80) || "checkpoint";
-    const checkpointDir = checkpointDirectory(input.workspaceId);
+    const checkpointDir = checkpointDirectory(registry, input.workspaceId);
     await mkdir(checkpointDir, { recursive: true });
     const filename = `${new Date().toISOString().replace(/[:.]/g, "-")}-${label}.blend`;
     const checkpointPath = join(checkpointDir, filename);
@@ -1065,7 +1083,7 @@ export async function blenderListCheckpoints(
 ): Promise<ToolResponse> {
   try {
     registry.getWorkspace(input.workspaceId);
-    const checkpointDir = checkpointDirectory(input.workspaceId);
+    const checkpointDir = checkpointDirectory(registry, input.workspaceId);
     if (!existsSync(checkpointDir)) return textResponse(JSON.stringify({ checkpoints: [] }, null, 2));
 
     const entries = await readdir(checkpointDir, { withFileTypes: true });
@@ -1091,7 +1109,7 @@ export async function blenderRollbackCheckpoint(
     registry.getWorkspace(input.workspaceId);
     const originalPath = await assertBlenderWorkspaceBound(registry, input.workspaceId);
     if (!originalPath) throw new Error("Blender workspace binding is missing.");
-    const checkpointDir = checkpointDirectory(input.workspaceId);
+    const checkpointDir = checkpointDirectory(registry, input.workspaceId);
     const checkpointPath = resolve(input.path);
     if (!isPathInsideRoot(checkpointPath, checkpointDir) || !checkpointPath.toLowerCase().endsWith(".blend")) {
       throw new Error("Checkpoint path is outside this workspace's managed Blender checkpoint directory.");
@@ -1217,7 +1235,8 @@ export async function blenderExportGlb(
 ): Promise<ToolResponse> {
   try {
     const workspace = registry.getWorkspace(input.workspaceId);
-    const absPath = registry.resolvePath(workspace, input.filepath);
+    const absPath = registry.resolveArtifactPath(workspace, input.filepath, "blender");
+    await mkdir(dirname(absPath), { recursive: true });
     const client = getBlenderClient(input.workspaceId);
 
     const res = await client.sendExecute(

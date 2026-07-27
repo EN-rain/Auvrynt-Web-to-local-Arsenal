@@ -134,7 +134,7 @@ export async function compareImages(
   let diffBase64: string | undefined;
 
   if (input.diffOutputPath) {
-    const absDiffPath = registry.resolvePath(workspace, input.diffOutputPath);
+    const absDiffPath = registry.resolveArtifactPath(workspace, input.diffOutputPath, "images");
     await mkdir(dirname(absDiffPath), { recursive: true });
     // Write simple diff image (reuse candidate buffer or reference buffer)
     await writeFile(absDiffPath, candBuffer);
@@ -208,7 +208,7 @@ export async function splitSpriteSheet(
 ): Promise<ToolResponse> {
   const workspace = registry.getWorkspace(input.workspaceId);
   const absolutePath = registry.resolvePath(workspace, input.path);
-  const outDir = registry.resolvePath(workspace, input.outputDirectory);
+  const outDir = registry.resolveArtifactPath(workspace, input.outputDirectory, "images");
   const buffer = await readFile(absolutePath);
   const dimensions = parseImageDimensions(buffer);
 
