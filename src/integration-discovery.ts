@@ -43,7 +43,7 @@ async function runningProcessNames(): Promise<string[]> {
   if (process.platform !== "win32") return [];
 
   try {
-    const { stdout } = await execFileAsync("tasklist.exe", ["/FO", "CSV", "/NH"], { timeout: 5_000 });
+    const { stdout } = await execFileAsync("tasklist.exe", ["/FO", "CSV", "/NH"], { timeout: 5_000, windowsHide: true });
     return stdout
       .split(/\r?\n/)
       .map((line) => line.match(/^"([^"]+)"/)?.[1]?.toLowerCase())
@@ -75,7 +75,7 @@ async function findExecutable(command: string): Promise<string | undefined> {
 
   try {
     const cmd = process.platform === "win32" ? "where.exe" : "which";
-    const { stdout } = await execFileAsync(cmd, [command], { timeout: 5_000 });
+    const { stdout } = await execFileAsync(cmd, [command], { timeout: 5_000, windowsHide: true });
     return stdout.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
   } catch {
     return undefined;
@@ -87,7 +87,7 @@ function hasProcess(processes: string[], markers: string[]): boolean {
   return processes.some((processName) => markers.some((marker) => processName === marker || processName.includes(marker)));
 }
 
-export async function discoverLocalIntegrations(): Promise<LocalIntegrationDiscovery> {
+export async function discoverLocalIntegrations(options: { pollMs?: number } = {}): Promise<LocalIntegrationDiscovery> {
   let configExecs: Record<string, string | undefined> = {};
   try {
     const config = loadConfig();
@@ -95,15 +95,25 @@ export async function discoverLocalIntegrations(): Promise<LocalIntegrationDisco
   } catch {}
 
   const blenderMcpPort = Number(process.env.AUVRYNT_BLENDER_MCP_PORT ?? 9876);
+  const pollMs = Math.max(0, options.pollMs ?? 0);
+  const pollPort = async (port: number): Promise<boolean> => {
+    const deadline = Date.now() + pollMs;
+    do {
+      if (await probePort("127.0.0.1", port)) return true;
+      if (Date.now() >= deadline) return false;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+    } while (Date.now() <= deadline);
+    return false;
+  };
   const [processes, cloudflaredSys, serenaSys, godotSys, blenderSys, blenderLabMcp, auvryntBlenderBridge, auvryntGodotBridge] = await Promise.all([
     runningProcessNames(),
     findExecutable("cloudflared"),
     findExecutable("serena"),
     findExecutable("godot"),
     findExecutable("blender"),
-    probePort("127.0.0.1", blenderMcpPort),
-    probePort("127.0.0.1", 49323),
-    probePort("127.0.0.1", 49322),
+    pollPort(blenderMcpPort),
+    pollPort(49323),
+    pollPort(49322),
   ]);
 
   const serena = configExecs.serena || serenaSys;

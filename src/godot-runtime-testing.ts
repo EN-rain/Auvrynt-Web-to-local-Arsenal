@@ -336,7 +336,7 @@ export async function exportGodotProject(
 
   const start = Date.now();
   try {
-    const { stdout, stderr } = await execFileAsync(godotExe, args, { cwd: projectDir });
+    const { stdout, stderr } = await execFileAsync(godotExe, args, { cwd: projectDir, windowsHide: true });
     return {
       success: true,
       outputFiles: [relative(workspace.root, absoluteOutputPath).replace(/\\/g, "/")],

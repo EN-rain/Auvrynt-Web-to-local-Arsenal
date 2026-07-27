@@ -111,6 +111,17 @@ assert.deepEqual(
   ["auvrynt:read", "auvrynt:blender", "auvrynt:blender-python"],
 );
 assert.deepEqual(
+  loadConfig({
+    ...baseEnv,
+    AUVRYNT_GODOT_GDSCRIPT_ENABLED: "0",
+    AUVRYNT_GODOT_CSHARP_ENABLED: "0",
+    AUVRYNT_BLENDER_ENABLED: "1",
+    AUVRYNT_SERENA_INTEGRATION_ENABLED: "0",
+    AUVRYNT_PLAYWRIGHT_ENABLED: "0",
+  }).oauth.scopes,
+  ["auvrynt:read", "auvrynt:write", "auvrynt:blender"],
+);
+assert.deepEqual(
   loadConfig({ ...baseEnv, AUVRYNT_OAUTH_ALLOWED_REDIRECT_HOSTS: "chatgpt.com,example.com" }).oauth
     .allowedRedirectHosts,
   ["chatgpt.com", "example.com"],

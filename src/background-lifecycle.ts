@@ -11,8 +11,8 @@ export const INTEGRATION_LABELS: Record<IntegrationKey, string> = {
   godotGdscript: "Godot GDScript",
   godotCsharp: "Godot C#",
   blender: "Blender",
-  serena: "Serena",
-  playwright: "Playwright",
+  serena: "Software Development",
+  playwright: "Web Development",
 };
 
 const START_PROFILE_ALIASES: Record<string, IntegrationKey> = {
@@ -22,8 +22,10 @@ const START_PROFILE_ALIASES: Record<string, IntegrationKey> = {
   playwright: "playwright",
   godotcs: "godotCsharp",
   "godot-cs": "godotCsharp",
+  godotcsharp: "godotCsharp",
   godotgd: "godotGdscript",
   "godot-gd": "godotGdscript",
+  godotgdscript: "godotGdscript",
   se: "serena",
   serena: "serena",
 };
@@ -63,7 +65,7 @@ interface ManagementLockRecord extends ProcessIdentity {
 
 export function parseIntegrationProfiles(args: string[]): IntegrationKey[] {
   const tokens = args
-    .flatMap((arg) => arg.split(","))
+    .flatMap((arg) => arg.split(/[\s,]+/))
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean);
   if (tokens.length === 0) throw new Error("Choose at least one profile: model, web, godotcs, godotgd, or se.");

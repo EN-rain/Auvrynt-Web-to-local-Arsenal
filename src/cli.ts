@@ -44,7 +44,7 @@ import {
 } from "./background-lifecycle.js";
 
 
-type Command = "serve" | "init" | "doctor" | "status" | "connected" | "token" | "uninstall" | "config" | "setup" | "enable" | "disable" | "add" | "stop" | "help";
+type Command = "serve" | "init" | "doctor" | "status" | "connected" | "token" | "uninstall" | "config" | "setup" | "enable" | "disable" | "add" | "stop" | "restart" | "help";
 const require = createRequire(import.meta.url);
 const SUPPORTED_NODE_RANGE = ">=20.12 <27";
 const MANAGED_SERENA_PACKAGE = "serena-agent==1.6.0";
@@ -58,6 +58,20 @@ function httpUrl(host: string, port: number, path = ""): string {
 
 function localProbeHost(host: string): string {
   return host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
+}
+
+interface ConsoleRow {
+  label: string;
+  value: string;
+}
+
+function printConsolePanel(title: string, rows: ConsoleRow[] = [], footer?: string): void {
+  const labelWidth = rows.reduce((width, row) => Math.max(width, row.label.length), 0);
+  console.log(`┌  ${title}`);
+  for (const row of rows) {
+    console.log(`│  ${row.label.padEnd(labelWidth)}  ${row.value}`);
+  }
+  console.log(footer ? `└  ${footer}` : "└");
 }
 
 async function main(argv: string[]): Promise<void> {
@@ -135,7 +149,7 @@ async function main(argv: string[]): Promise<void> {
       runConnected();
       return;
     case "token":
-      runToken();
+      runToken(args);
       return;
     case "uninstall":
       await runUninstall(args.includes("--yes") || args.includes("-y"));
@@ -158,6 +172,16 @@ async function main(argv: string[]): Promise<void> {
     case "stop":
       await runStop();
       return;
+    case "restart":
+      {
+        const restartRequest = parseStartRequest(args);
+        const launchRoot = resolve(process.cwd());
+        process.env.AUVRYNT_ALLOWED_ROOTS = launchRoot;
+        process.env.AUVRYNT_WORKTREE_ROOT = launchRoot;
+        await ensureConfigured({ directoryScoped: true });
+        await runRestart(restartRequest, launchRoot);
+      }
+      return;
     case "help":
       printHelp();
       return;
@@ -168,7 +192,7 @@ function normalizeCommand(command: string | undefined): Command {
   if (!command || command === "serve" || command === "start") return "serve";
   if (command === "init" || command === "doctor" || command === "config") return command;
   if (command === "status" || command === "connected" || command === "token" || command === "uninstall") return command;
-  if (command === "setup" || command === "enable" || command === "disable" || command === "add" || command === "stop") return command;
+  if (command === "setup" || command === "enable" || command === "disable" || command === "add" || command === "stop" || command === "restart") return command;
   if (command === "help" || command === "--help" || command === "-h") return "help";
   throw new Error(`Unknown command: ${command}`);
 }
@@ -411,7 +435,7 @@ async function runBackgroundStartUnlocked(request: StartRequest, launchRoot: str
     if (!replace && input.isTTY && output.isTTY) {
       const answer = await prompts.confirm({ message: `Replace running Auvrynt instance (PID ${active.record.pid})?`, initialValue: false });
       if (prompts.isCancel(answer) || !answer) {
-        console.log("Auvrynt start cancelled.");
+        printConsolePanel("Auvrynt start cancelled");
         return;
       }
       replace = true;
@@ -420,9 +444,12 @@ async function runBackgroundStartUnlocked(request: StartRequest, launchRoot: str
     if (resolve(active.record.launchRoot ?? launchRoot) === resolve(launchRoot) && active.record.controlToken) {
       await updateActiveProfiles(active, profiles);
       const tunnel = await readManagedTunnel(active.stateDir, active.record.port);
-      console.log(`Updated the running Auvrynt instance (PID ${active.record.pid}) without restarting it.`);
-      console.log(`Enabled: ${profiles.map((key) => INTEGRATION_LABELS[key]).join(", ") || "none"}.`);
-      if (tunnel) console.log(`Cloudflare URL: ${tunnel.url}/mcp`);
+      printConsolePanel("Auvrynt updated", [
+        { label: "PID", value: String(active.record.pid) },
+        { label: "Workspace", value: active.record.launchRoot ?? launchRoot },
+        { label: "Integrations", value: profiles.map((key) => INTEGRATION_LABELS[key]).join(", ") || "none" },
+        ...(tunnel ? [{ label: "Public MCP", value: `${tunnel.url}/mcp` }] : []),
+      ], "Server and tunnel kept running");
       return;
     }
     await adoptLegacyManagedTunnel(active);
@@ -464,9 +491,12 @@ async function runBackgroundStartUnlocked(request: StartRequest, launchRoot: str
     throw error;
   }
   const profileText = profiles.map((key) => INTEGRATION_LABELS[key]).join(", ") || "no optional integrations";
-  console.log(`Auvrynt is running in the background (PID ${child.pid}) with: ${profileText}.`);
-  console.log(`Cloudflare URL: ${tunnel.url}/mcp`);
-  console.log(`Run \`auvrynt status\` to check it, \`auvrynt stop\` to stop it.`);
+  printConsolePanel("Auvrynt started", [
+    { label: "PID", value: String(child.pid) },
+    { label: "Workspace", value: launchRoot },
+    { label: "Integrations", value: profileText },
+    { label: "Public MCP", value: `${tunnel.url}/mcp` },
+  ], "Next: auvrynt status  |  Stop: auvrynt stop");
 }
 
 async function runBackgroundStart(request: StartRequest, launchRoot = resolve(process.cwd())): Promise<void> {
@@ -485,6 +515,9 @@ async function stopActiveInstance(active: { stateDir: string; lockPath: string; 
     ? processIdentityMatches(active.record.pid, active.record)
     : isProcessRunning(active.record.pid) && await isAuvryntHealthReachable(active.record.host, active.record.port);
   if (!stillOwned) {
+    if (isProcessRunning(active.record.pid) || await isAuvryntHealthReachable(active.record.host, active.record.port)) {
+      throw new Error(`Auvrynt PID ${active.record.pid} is still running but its process identity could not be verified. Refusing to stop an unowned process.`);
+    }
     await unlink(active.lockPath).catch(() => undefined);
     return;
   }
@@ -547,8 +580,26 @@ async function runStop(): Promise<void> {
       "Auvrynt could not stop all managed processes.",
     );
   }
-  if (!active && !tunnelStopped) return void console.log("Auvrynt is not running.");
-  console.log("Stopped Auvrynt and its Cloudflare tunnel.");
+  const remaining = await readActiveInstance();
+  if (remaining || await isAuvryntHealthReachable(config.host, config.port)) {
+    throw new Error("Auvrynt stop did not verify that the managed server exited.");
+  }
+  if (await readManagedTunnel(config.stateDir, config.port)) {
+    throw new Error("Auvrynt stop did not verify that the managed Cloudflare tunnel exited.");
+  }
+  if (!active && !tunnelStopped) return void printConsolePanel("Auvrynt", [{ label: "Status", value: "Not running" }]);
+  printConsolePanel("Auvrynt stopped", [
+    { label: "Server", value: "Stopped" },
+    { label: "Tunnel", value: "Stopped" },
+  ], "Start again: auvrynt start");
+}
+
+async function runRestart(request: StartRequest, launchRoot: string): Promise<void> {
+  const active = await readActiveInstance();
+  const profiles = request.profiles ?? active?.record.profiles;
+  if (!profiles) await ensureIntegrationChoicesConfigured();
+  await runStop();
+  await runBackgroundStart({ ...request, profiles, replace: true, backgroundChild: false }, launchRoot);
 }
 
 async function runAdd(args: string[]): Promise<void> {
@@ -572,9 +623,11 @@ async function runAdd(args: string[]): Promise<void> {
       }
       await updateActiveProfiles(active, profiles);
       const tunnel = await readManagedTunnel(active.stateDir, active.record.port);
-      console.log(`Updated the running Auvrynt instance (PID ${active.record.pid}) without restarting it.`);
-      console.log(`Enabled: ${profiles.map((key) => INTEGRATION_LABELS[key]).join(", ")}.`);
-      if (tunnel) console.log(`Cloudflare URL: ${tunnel.url}/mcp`);
+      printConsolePanel("Auvrynt integrations updated", [
+        { label: "PID", value: String(active.record.pid) },
+        { label: "Integrations", value: profiles.map((key) => INTEGRATION_LABELS[key]).join(", ") },
+        ...(tunnel ? [{ label: "Public MCP", value: `${tunnel.url}/mcp` }] : []),
+      ], "Server and tunnel kept running");
       return;
     }
     await runBackgroundStartUnlocked(
@@ -903,25 +956,29 @@ async function serve(): Promise<void> {
 
 async function runDoctor(): Promise<void> {
   const files = loadAuvryntFiles();
-  console.log(`Config dir: ${files.dir}`);
-  console.log(`Config file: ${files.configExists ? files.configPath : "missing"}`);
-  console.log(`Auth file: ${files.authExists ? files.authPath : "missing"}`);
-  console.log(`Node: ${process.version} (${nodeVersionStatus()})`);
-  console.log(`Node ABI: ${process.versions.modules}`);
-  console.log(`Platform: ${process.platform} ${process.arch}`);
-  console.log(`Git: ${checkGitAvailable()}`);
-  console.log(`Bash shell: ${checkBashShell()}`);
-  console.log(`SQLite native dependency: ${checkSqliteNative()}`);
+  const rows: ConsoleRow[] = [
+    { label: "Config dir", value: files.dir },
+    { label: "Config", value: files.configExists ? files.configPath : "Missing" },
+    { label: "Auth", value: files.authExists ? files.authPath : "Missing" },
+    { label: "Node", value: `${process.version} (${nodeVersionStatus()}), ABI ${process.versions.modules}` },
+    { label: "Platform", value: `${process.platform} ${process.arch}` },
+    { label: "Git", value: checkGitAvailable() },
+    { label: "Bash", value: checkBashShell() },
+    { label: "SQLite", value: checkSqliteNative() },
+  ];
 
   try {
     const config = loadConfig();
-    console.log(`Local MCP URL: ${httpUrl(config.host, config.port, "/mcp")}`);
-    console.log(`Public MCP URL: ${new URL("/mcp", config.publicBaseUrl).toString()}`);
-    console.log(`Allowed roots: ${config.allowedRoots.join(", ")}`);
-    console.log(`Allowed hosts: ${config.allowedHosts.join(", ")}`);
+    rows.push(
+      { label: "Local MCP", value: httpUrl(config.host, config.port, "/mcp") },
+      { label: "Public MCP", value: new URL("/mcp", config.publicBaseUrl).toString() },
+      { label: "Roots", value: config.allowedRoots.join(", ") },
+      { label: "Hosts", value: config.allowedHosts.join(", ") },
+    );
   } catch (error) {
-    console.log(`Config status: ${error instanceof Error ? error.message : String(error)}`);
+    rows.push({ label: "Config status", value: error instanceof Error ? error.message : String(error) });
   }
+  printConsolePanel("Auvrynt doctor", rows);
 }
 
 async function acquireInstanceLock(
@@ -1128,14 +1185,14 @@ async function resolveCloudflaredExecutable(): Promise<string> {
     return execFileSync(
       process.platform === "win32" ? "where.exe" : "which",
       ["cloudflared"],
-      { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] },
+      { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
     ).split(/\r?\n/)[0]?.trim() || "cloudflared";
   } catch {
     if (process.platform === "win32") {
       const managedExecutable = join(homedir(), ".auvrynt", "bin", "cloudflared.exe");
       if (existsSync(managedExecutable)) {
         try {
-          execFileSync(managedExecutable, ["--version"], { stdio: "ignore" });
+          execFileSync(managedExecutable, ["--version"], { stdio: "ignore", windowsHide: true });
           return managedExecutable;
         } catch {
           // A partial or corrupt managed binary is replaced by the verified installer below.
@@ -1154,7 +1211,7 @@ function findCommand(command: string): string | undefined {
     return execFileSync(
       process.platform === "win32" ? "where.exe" : "which",
       [command],
-      { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] },
+      { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
     ).split(/\r?\n/)[0]?.trim() || undefined;
   } catch {
     return undefined;
@@ -1210,7 +1267,7 @@ async function selfHealStartIntegrations(
     process.env.AUVRYNT_SERENA_ENABLED = "true";
     serenaExecutable = await ensureSerenaExecutable();
     process.env.AUVRYNT_SERENA_EXECUTABLE = serenaExecutable;
-    execFileSync(serenaExecutable, ["--version"], { stdio: "ignore" });
+    execFileSync(serenaExecutable, ["--version"], { stdio: "ignore", windowsHide: true });
   } else {
     process.env.AUVRYNT_SERENA_ENABLED = "false";
   }
@@ -1363,48 +1420,69 @@ async function installWindowsCloudflared(): Promise<string> {
 
 async function runStatus(): Promise<void> {
   const files = loadAuvryntFiles();
+  const config = loadConfig();
   const host = files.config.host ?? "127.0.0.1";
   const port = files.config.port ?? 49321;
   const healthUrl = httpUrl(localProbeHost(host), port, "/healthz");
   const active = await readActiveInstance();
   const tunnel = await readManagedTunnel(loadConfig().stateDir, port);
+  const rows: ConsoleRow[] = [];
 
   try {
     const response = await fetch(healthUrl, { signal: AbortSignal.timeout(1500) });
     const body = await response.json().catch(() => ({})) as { ok?: boolean; name?: string };
-    console.log(`Local MCP: ${response.ok && body.ok ? "connected" : "error"}`);
-    console.log(`Health URL: ${healthUrl}`);
+    rows.push({ label: "Local MCP", value: response.ok && body.ok ? "Connected" : "Error" });
   } catch (error) {
-    console.log("Local MCP: disconnected");
-    console.log(`Health URL: ${healthUrl}`);
-    console.log(`Detail: ${error instanceof Error ? error.message : String(error)}`);
+    rows.push({ label: "Local MCP", value: "Disconnected" });
+    rows.push({ label: "Detail", value: error instanceof Error ? error.message : String(error) });
   }
+  rows.push({ label: "Health", value: healthUrl });
   if (active) {
-    console.log(`Managed instance: PID ${active.record.pid}`);
-    console.log(`Workspace: ${active.record.launchRoot ?? "unknown"}`);
-    console.log(`Profiles: ${active.record.profiles?.map((key) => INTEGRATION_LABELS[key]).join(", ") || "saved integrations"}`);
+    rows.push({ label: "Process", value: `PID ${active.record.pid}` });
+    rows.push({ label: "Workspace", value: active.record.launchRoot ?? "unknown" });
   } else {
-    console.log("Managed instance: not running");
+    rows.push({ label: "Process", value: "Not running" });
   }
-  console.log(`Public MCP: ${tunnel ? `${tunnel.url}/mcp` : "not running"}`);
+  rows.push({ label: "Public MCP", value: tunnel ? `${tunnel.url}/mcp` : "Not running" });
 
-  const local = await discoverLocalIntegrations();
-  const godotPlugin = getGlobalGodotPluginStatus();
-  const godotConfigured = Boolean(local.executables.godot || local.executables.godotCsharp || godotPlugin.installed);
-  const godotRunning = processDetected(local, "godot");
-  const godotStatusText = local.ports.auvrynt_godot_bridge
-    ? "OK (Auvrynt bridge connected)"
-    : godotRunning
-    ? "OK (running)"
-    : godotConfigured
-    ? "OK"
-    : "not detected";
+  const local = await discoverLocalIntegrations({ pollMs: 1500 });
+  const profileSet = new Set(active?.record.profiles ?? INTEGRATION_KEYS.filter((key) => config.integrations[key]));
+  rows.push({
+    label: "Integrations",
+    value: profileSet.size > 0 ? [...profileSet].map((key) => INTEGRATION_LABELS[key]).join(", ") : "None",
+  });
 
-  console.log(`Blender MCP (9876): ${local.ports.blender_lab_mcp ? "connected" : processDetected(local, "blender") ? "running, MCP unavailable" : "not detected"}`);
-  console.log(`Godot: ${godotStatusText}`);
-  if (local.executables.godotCsharp) console.log(`Godot C#: configured`);
-  console.log(`Cloudflare Tunnel: ${processDetected(local, "cloudflare_tunnel") ? "running" : local.executables.cloudflared ? "installed, not running" : "not installed"}`);
-  console.log(`Serena: ${processDetected(local, "serena") ? "running" : local.executables.serena ? "installed" : "not installed"}`);
+  if (profileSet.has("blender")) {
+    const blenderConnected = local.ports.blender_lab_mcp || local.ports.auvrynt_blender_bridge;
+    const blenderDetail = local.ports.blender_lab_mcp
+      ? "Blender MCP connected on 9876"
+      : local.ports.auvrynt_blender_bridge
+      ? "Auvrynt Blender bridge connected on 49323"
+      : processDetected(local, "blender")
+      ? "Blender is running; waiting for MCP on 9876 or bridge on 49323"
+      : "Blender is not detected";
+    rows.push({ label: "Blender", value: `${blenderConnected ? "Connected" : "Offline"} - ${blenderDetail}` });
+  }
+  if (profileSet.has("godotGdscript") || profileSet.has("godotCsharp")) {
+    const godotPlugin = getGlobalGodotPluginStatus();
+    const godotConfigured = Boolean(local.executables.godot || local.executables.godotCsharp || godotPlugin.installed);
+    const godotStatusText = local.ports.auvrynt_godot_bridge
+      ? "connected"
+      : processDetected(local, "godot")
+      ? "running, bridge unavailable"
+      : godotConfigured
+      ? "installed, not running"
+      : "not detected";
+    rows.push({ label: "Godot", value: godotStatusText });
+  }
+  if (profileSet.has("serena")) {
+    rows.push({ label: "Software", value: processDetected(local, "serena") ? "Ready" : local.executables.serena ? "Installed, not running" : "Not detected" });
+  }
+  if (profileSet.has("playwright")) {
+    const playwright = getPlaywrightRuntimeStatus();
+    rows.push({ label: "Web", value: playwright.chromiumInstalled ? "Ready" : playwright.packageInstalled ? "Installed, browser unavailable" : "Not installed" });
+  }
+  printConsolePanel("Auvrynt status", rows, active ? "Stop: auvrynt stop" : "Start: auvrynt start");
 }
 
 
@@ -1413,8 +1491,21 @@ function stateDirForFiles(files: ReturnType<typeof loadAuvryntFiles>): string {
   return resolve(expandHomePath(files.config.stateDir ?? join(homedir(), ".local", "share", "auvrynt")));
 }
 
-function runToken(): void {
+function runToken(args: string[]): void {
   const files = loadAuvryntFiles();
+  const [subcommand] = args;
+  if (subcommand === "reset") {
+    if (process.env.AUVRYNT_OAUTH_OWNER_TOKEN?.trim()) {
+      throw new Error("Cannot reset the persisted token while AUVRYNT_OAUTH_OWNER_TOKEN is set. Remove that environment variable first.");
+    }
+    const token = generateOwnerToken();
+    writeAuvryntAuth({ ownerToken: token });
+    printConsolePanel("Owner token reset", [
+      { label: "Token", value: token },
+    ], "Apply it: auvrynt restart");
+    return;
+  }
+  if (subcommand) throw new Error("Usage: auvrynt token [reset]");
   const token = process.env.AUVRYNT_OAUTH_OWNER_TOKEN?.trim() || files.auth.ownerToken?.trim();
   if (!token) throw new Error("Owner token is not configured. Run `auvrynt init` first.");
   console.log(token);
@@ -1422,16 +1513,15 @@ function runToken(): void {
 
 function runConnected(): void {
   const clients = readConnectedClients(stateDirForFiles(loadAuvryntFiles()));
-  console.log("Connected web agents:");
   if (clients.length === 0) {
-    console.log("  none recorded yet");
+    printConsolePanel("Connected web agents", [{ label: "Status", value: "None recorded yet" }]);
     return;
   }
-
-  for (const client of clients) {
-    console.log(`  ${client.provider} — ${client.requestCount} request(s), last seen ${client.lastSeen}`);
-    if (client.userAgent) console.log(`    user-agent: ${client.userAgent}`);
-  }
+  const rows = clients.flatMap((client): ConsoleRow[] => [
+    { label: client.provider, value: `${client.requestCount} request(s), last seen ${client.lastSeen}` },
+    ...(client.userAgent ? [{ label: "User agent", value: client.userAgent }] : []),
+  ]);
+  printConsolePanel("Connected web agents", rows);
 }
 
 async function runUninstall(skipConfirmation: boolean): Promise<void> {
@@ -1442,19 +1532,20 @@ async function runUninstall(skipConfirmation: boolean): Promise<void> {
     }
     const answer = await prompts.confirm({ message: `Remove Auvrynt configuration from ${files.dir}?`, initialValue: false });
     if (prompts.isCancel(answer) || !answer) {
-      console.log("Uninstall cancelled.");
+      printConsolePanel("Auvrynt uninstall cancelled");
       return;
     }
   }
 
   if (files.configExists || files.authExists) {
     rmSync(files.dir, { recursive: true, force: true });
-    console.log(`Removed Auvrynt configuration: ${files.dir}`);
+    printConsolePanel("Auvrynt configuration removed", [
+      { label: "Removed", value: files.dir },
+      { label: "Preserved", value: "npm package and custom state/worktree directories" },
+    ], "Remove CLI: npm uninstall -g auvrynt");
   } else {
-    console.log("Auvrynt configuration was already absent.");
+    printConsolePanel("Auvrynt configuration", [{ label: "Status", value: "Already absent" }]);
   }
-  console.log("The npm CLI package remains installed. Remove it with: npm uninstall -g auvrynt");
-  console.log("Custom state/worktree directories were preserved.");
 }
 
 function runConfigCommand(args: string[]): void {
@@ -1498,10 +1589,11 @@ function printHelp(): void {
       "  auvrynt start godotcs   Start Godot C# only",
       "  auvrynt start godotgd   Start Godot GDScript only",
       "  auvrynt start se        Start Serena only",
-      "  auvrynt start model,godotcs  Start multiple profiles (comma-separated)",
+      "  auvrynt start web,model      Start a multiple-integration combo",
       "  auvrynt start ... --replace  Live-replace profiles, or change the managed workspace",
       "  auvrynt add web         Add profiles live without restarting the server or tunnel",
       "  auvrynt stop            Stop Auvrynt and its Cloudflare tunnel",
+      "  auvrynt restart [combo] Stop then start with the active integration combo",
       "  auvrynt serve           Start the server with verbose console logs",
       "  auvrynt init            Create or update ~/.auvrynt/config.json and auth.json",
       "  auvrynt setup           Configure executable paths for local tools",
@@ -1511,6 +1603,7 @@ function printHelp(): void {
       "  auvrynt status          Show local MCP and integration connection status",
       "  auvrynt connected       Show recently connected MCP/web-agent providers",
       "  auvrynt token           Print the Owner token only on explicit local request",
+      "  auvrynt token reset     Generate and save a new local Owner token",
       "  auvrynt uninstall       Remove Auvrynt configuration after confirmation",
       "  auvrynt uninstall -y    Remove Auvrynt configuration without confirmation",
       "  auvrynt config get      Print persisted config",
@@ -1564,82 +1657,68 @@ async function ensureIntegrationChoicesConfigured(): Promise<void> {
 async function runEnable(): Promise<void> {
   const files = loadAuvryntFiles();
   const integrations = completeIntegrationsConfig(files.config.integrations);
-  if (INTEGRATION_KEYS.every((key) => integrations[key])) {
-    console.log("All integrations are already enabled.");
-    return;
-  }
-
   prompts.intro("  Enable Auvrynt integrations  ");
-  prompts.note(
-    INTEGRATION_KEYS.map((key, index) => `${index + 1}. ${INTEGRATION_LABELS[key]}  ${integrations[key] ? "[enabled]" : "[disabled]"}`).join("\n"),
-    "Integrations",
-  );
-  const picked = await prompts.text({
-    message: "Type numbers to enable, e.g. 1 3 5",
-    placeholder: "1 2 3 4 5",
-    validate: (value) => {
-      const raw = String(value ?? "").trim();
-      if (!raw) return "Enter at least one number.";
-      const values = raw.split(/[\s,]+/).map(Number);
-      if (values.some((value) => !Number.isInteger(value) || value < 1 || value > INTEGRATION_KEYS.length)) {
-        return "Use numbers from 1 to 5.";
-      }
-      if (values.every((value) => integrations[INTEGRATION_KEYS[value - 1]])) {
-        return "Choose at least one disabled integration.";
-      }
-      return undefined;
-    },
-  });
-
-  if (prompts.isCancel(picked)) {
-    prompts.cancel("Enable cancelled.");
-    return;
+  while (true) {
+    prompts.note(
+      ["0. Done", ...INTEGRATION_KEYS.map((key, index) => `${index + 1}. ${INTEGRATION_LABELS[key]}  ${integrations[key] ? "[enabled]" : "[disabled]"}`)].join("\n"),
+      "Integrations",
+    );
+    const picked = await prompts.text({
+      message: "Type numbers to enable, or 0 when finished",
+      placeholder: "1 3 5 or 0",
+      validate: (value) => {
+        const raw = String(value ?? "").trim();
+        if (!raw) return "Enter one or more numbers, or 0.";
+        const values = raw.split(/[\s,]+/).map(Number);
+        if (values.includes(0)) return values.length === 1 ? undefined : "Use 0 by itself when finished.";
+        if (values.some((value) => !Number.isInteger(value) || value < 1 || value > INTEGRATION_KEYS.length)) return "Use 0 or numbers from 1 to 5.";
+        if (values.every((value) => integrations[INTEGRATION_KEYS[value - 1]])) return "Choose at least one disabled integration, or type 0.";
+        return undefined;
+      },
+    });
+    if (prompts.isCancel(picked)) {
+      prompts.cancel("Enable cancelled.");
+      return;
+    }
+    const values = String(picked).trim().split(/[\s,]+/).map(Number);
+    if (values[0] === 0) break;
+    for (const value of new Set(values)) integrations[INTEGRATION_KEYS[value - 1]] = true;
+    writeIntegrationConfig(integrations);
   }
-
-  const pickedIndexes = Array.from(new Set(String(picked).trim().split(/[\s,]+/).map((value) => Number(value) - 1)));
-  for (const index of pickedIndexes) integrations[INTEGRATION_KEYS[index]] = true;
-  writeIntegrationConfig(integrations);
   prompts.outro("Integration settings updated. Restart any running Auvrynt server for the change to take effect.");
 }
 
 async function runDisable(): Promise<void> {
   const files = loadAuvryntFiles();
   const integrations = completeIntegrationsConfig(files.config.integrations);
-  if (INTEGRATION_KEYS.every((key) => !integrations[key])) {
-    console.log("All integrations are already disabled.");
-    return;
-  }
-
   prompts.intro("  Disable Auvrynt integrations  ");
-  prompts.note(
-    INTEGRATION_KEYS.map((key, index) => `${index + 1}. ${INTEGRATION_LABELS[key]}  ${integrations[key] ? "[enabled]" : "[disabled]"}`).join("\n"),
-    "Integrations",
-  );
-  const picked = await prompts.text({
-    message: "Type numbers to disable, e.g. 1 3 5",
-    placeholder: "1 2 3 4 5",
-    validate: (value) => {
-      const raw = String(value ?? "").trim();
-      if (!raw) return "Enter at least one number.";
-      const values = raw.split(/[\s,]+/).map(Number);
-      if (values.some((value) => !Number.isInteger(value) || value < 1 || value > INTEGRATION_KEYS.length)) {
-        return "Use numbers from 1 to 5.";
-      }
-      if (values.every((value) => !integrations[INTEGRATION_KEYS[value - 1]])) {
-        return "Choose at least one enabled integration.";
-      }
-      return undefined;
-    },
-  });
-
-  if (prompts.isCancel(picked)) {
-    prompts.cancel("Disable cancelled.");
-    return;
+  while (true) {
+    prompts.note(
+      ["0. Done", ...INTEGRATION_KEYS.map((key, index) => `${index + 1}. ${INTEGRATION_LABELS[key]}  ${integrations[key] ? "[enabled]" : "[disabled]"}`)].join("\n"),
+      "Integrations",
+    );
+    const picked = await prompts.text({
+      message: "Type numbers to disable, or 0 when finished",
+      placeholder: "1 3 5 or 0",
+      validate: (value) => {
+        const raw = String(value ?? "").trim();
+        if (!raw) return "Enter one or more numbers, or 0.";
+        const values = raw.split(/[\s,]+/).map(Number);
+        if (values.includes(0)) return values.length === 1 ? undefined : "Use 0 by itself when finished.";
+        if (values.some((value) => !Number.isInteger(value) || value < 1 || value > INTEGRATION_KEYS.length)) return "Use 0 or numbers from 1 to 5.";
+        if (values.every((value) => !integrations[INTEGRATION_KEYS[value - 1]])) return "Choose at least one enabled integration, or type 0.";
+        return undefined;
+      },
+    });
+    if (prompts.isCancel(picked)) {
+      prompts.cancel("Disable cancelled.");
+      return;
+    }
+    const values = String(picked).trim().split(/[\s,]+/).map(Number);
+    if (values[0] === 0) break;
+    for (const value of new Set(values)) integrations[INTEGRATION_KEYS[value - 1]] = false;
+    writeIntegrationConfig(integrations);
   }
-
-  const pickedIndexes = Array.from(new Set(String(picked).trim().split(/[\s,]+/).map((value) => Number(value) - 1)));
-  for (const index of pickedIndexes) integrations[INTEGRATION_KEYS[index]] = false;
-  writeIntegrationConfig(integrations);
   prompts.outro("Integration settings updated. Restart any running Auvrynt server for the change to take effect.");
 }
 
@@ -1852,7 +1931,7 @@ function checkSqliteNative(): string {
 function checkGitAvailable(): string {
   try {
     const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
-    return execFileSync("git", ["--version"], { encoding: "utf8" }).trim();
+    return execFileSync("git", ["--version"], { encoding: "utf8", windowsHide: true }).trim();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return `unavailable (${message})`;

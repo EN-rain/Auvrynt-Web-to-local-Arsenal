@@ -39,7 +39,7 @@ export async function detectDotnetSdk(): Promise<{
   architecture?: string;
 }> {
   try {
-    const { stdout } = await execFileAsync("dotnet", ["--info"]);
+    const { stdout } = await execFileAsync("dotnet", ["--info"], { windowsHide: true });
     const lines = stdout.split(/\r?\n/);
 
     const sdkVersions: string[] = [];
@@ -118,7 +118,7 @@ export async function verifyGodotExecutable(exePath: string): Promise<{
   hasDotnetSupport: boolean;
 }> {
   try {
-    const { stdout, stderr } = await execFileAsync(exePath, ["--version"]);
+    const { stdout, stderr } = await execFileAsync(exePath, ["--version"], { windowsHide: true });
     const output = (stdout + "\n" + stderr).trim();
 
     const version = output.split(/\r?\n/)[0] ?? output;

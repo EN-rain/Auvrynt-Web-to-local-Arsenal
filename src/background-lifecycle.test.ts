@@ -12,7 +12,9 @@ import {
 } from "./background-lifecycle.js";
 
 assert.deepEqual(parseIntegrationProfiles(["model, web", "godotcs"]), ["blender", "playwright", "godotCsharp"]);
+assert.deepEqual(parseIntegrationProfiles(["web model"]), ["playwright", "blender"]);
 assert.deepEqual(parseIntegrationProfiles(["se", "serena"]), ["serena"]);
+assert.deepEqual(parseIntegrationProfiles(["godotGdscript", "godotCsharp", "playwright"]), ["godotGdscript", "godotCsharp", "playwright"]);
 assert.deepEqual(parseStartRequest(["model", "--replace"]), {
   profiles: ["blender"],
   replace: true,

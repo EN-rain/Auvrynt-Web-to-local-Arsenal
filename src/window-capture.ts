@@ -148,6 +148,7 @@ try {
       },
       maxBuffer: 1024 * 1024,
       timeout: 20_000,
+      windowsHide: true,
     });
     const buffer = await readFile(absoluteOutputPath);
     const relPath = relative(workspace.root, absoluteOutputPath).replace(/\\/g, "/");

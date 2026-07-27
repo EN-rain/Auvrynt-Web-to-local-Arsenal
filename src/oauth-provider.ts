@@ -128,20 +128,19 @@ function formHtml(params: {
       .token-group { margin-bottom: 12px; }
       .token-group label { display: block; margin-bottom: 5px; color: #dce6f1; font-size: 12px; font-weight: 650; }
       .input-wrapper { position: relative; }
-      .input-wrapper input { width: 100%; padding: 11px 58px 11px 12px; border: 1px solid rgba(216,180,254,.35); border-radius: 8px; background: rgba(12, 6, 24, .72); color: #fbf7ff; font: inherit; font-size: 14px; outline: none; }
+      .input-wrapper input { width: 100%; padding: 11px 12px; border: 1px solid rgba(216,180,254,.35); border-radius: 8px; background: rgba(12, 6, 24, .72); color: #fbf7ff; font: inherit; font-size: 14px; outline: none; }
       .input-wrapper input:focus { border-color: #c084fc; box-shadow: 0 0 0 2px rgba(192,132,252,.20); }
       .input-wrapper input::placeholder { color: #657388; }
-      .toggle-vis { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); border: 0; padding: 6px 9px; background: transparent; color: #a7a0b3; cursor: pointer; font-size: 11px; font-weight: 650; }
-      .toggle-vis:hover { color: #f3e8ff; }
       .button-group { display: flex; gap: 8px; }
       .button-group button { flex: 1; min-height: 42px; border-radius: 7px; padding: 10px 12px; font: inherit; font-size: 13px; font-weight: 750; cursor: pointer; }
-      .button-group button:focus-visible, .toggle-vis:focus-visible { outline: 2px solid #c084fc; outline-offset: 2px; }
+      .button-group button:focus-visible { outline: 2px solid #c084fc; outline-offset: 2px; }
       .btn-approve { border: 1px solid #c084fc; color: #1e0b36; background: linear-gradient(135deg, #e9d5ff, #c084fc); }
       .btn-deny { border: 1px solid rgba(216,180,254,.35); color: #f3e8ff; background: transparent; }
       .error { display: block; margin: 0 0 10px; color: #ffb4b4; font-size: 12px; line-height: 1.35; }
       .privilege-note { margin: -2px 0 10px; color: #e9d5ff; font-size: 11px; line-height: 1.35; }
       .privilege-note strong { color: #f5d0fe; }
       .security-note { display: flex; gap: 7px; margin: 10px 0 0; color: #a78bfa; font-size: 11px; line-height: 1.35; }
+      .submit-status { min-height: 16px; margin: 8px 0 0; color: #c4b5fd; font-size: 11px; line-height: 1.35; }
       .security-note::before { content: "✓"; color: #c084fc; font-weight: 800; }
       @media (max-width: 620px) { body { align-items: flex-start; } .form-panel { padding: 14px 18px; } .scope-list li { min-width: 100%; } }
       @media (max-height: 680px) { .brand-icon { width: 40px; height: 40px; margin-bottom: 8px; } .intro, .client-badge, .scope-list { margin-bottom: 8px; } .scope-list li { font-size: 10px; padding: 0; } .form-panel h2 { font-size: 26px; } }
@@ -162,13 +161,12 @@ function formHtml(params: {
           ${scopeItems}
         </ul>
         ${privilegeNote}
-        <form method="post" aria-describedby="token-desc">
+        <form id="authorization-form" method="post" action="/authorize" aria-describedby="token-desc">
           <div class="token-group">
             <label for="owner_token">Local owner token</label>
             <p id="token-desc" class="sr-only">Enter your Auvrynt owner token to authorize this connection. This token stays on this page and is never shared with the web agent.</p>
             <div class="input-wrapper">
               <input id="owner_token" name="owner_token" type="password" placeholder="Enter your owner token" autocomplete="off" autofocus required aria-required="true" />
-              <button type="button" class="toggle-vis" aria-label="Show owner token" data-target="owner_token">Show</button>
             </div>
           </div>
 ${hiddenFields}
@@ -176,21 +174,30 @@ ${hiddenFields}
             <button type="submit" name="denied" value="true" class="btn-deny" formnovalidate>Deny request</button>
             <button type="submit" class="btn-approve">Approve connection</button>
           </div>
+          <p id="approval-status" class="submit-status" role="status" aria-live="polite"></p>
         </form>
         <p class="security-note">Your owner token is validated locally. It is never sent to the web agent, stored in cookies, or written to logs.</p>
       </section>
     </main>
     <script nonce="${htmlEscape(params.nonce)}">
       (function() {
-        var btn = document.querySelector('.toggle-vis');
-        var input = document.getElementById('owner_token');
-        if (btn && input) {
-          btn.addEventListener('click', function() {
-            var isPassword = input.type === 'password';
-            input.type = isPassword ? 'text' : 'password';
-            btn.textContent = isPassword ? 'Hide' : 'Show';
-            btn.setAttribute('aria-label', isPassword ? 'Hide owner token' : 'Show owner token');
-            input.setAttribute('aria-live', 'polite');
+        var form = document.getElementById('authorization-form');
+        var status = document.getElementById('approval-status');
+        if (form && status) {
+          form.addEventListener('submit', function(event) {
+            if (event.submitter && event.submitter.name === 'denied') return;
+            var approve = form.querySelector('.btn-approve');
+            if (approve) {
+              approve.textContent = 'Approving...';
+              approve.setAttribute('aria-busy', 'true');
+            }
+            status.textContent = 'Approval submitted. Returning to your web agent...';
+            window.setTimeout(function() {
+              if (!approve || approve.textContent !== 'Approving...') return;
+              approve.textContent = 'Approve connection';
+              approve.removeAttribute('aria-busy');
+              status.textContent = 'Still waiting for the web agent callback. Keep this page open, then retry if the web agent does not finish connecting.';
+            }, 8000);
           });
         }
       })();
@@ -221,7 +228,14 @@ function authorizationNonce(): string {
   return randomBytes(18).toString("base64url");
 }
 
-function setAuthorizationSecurityHeaders(res: Response, nonce: string): void {
+function setAuthorizationSecurityHeaders(res: Response, nonce: string, redirectUri?: string): void {
+  let redirectOrigin: string | undefined;
+  try {
+    redirectOrigin = redirectUri ? new URL(redirectUri).origin : undefined;
+  } catch {
+    redirectOrigin = undefined;
+  }
+  const formAction = ["'self'", redirectOrigin].filter(Boolean).join(" ");
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Pragma", "no-cache");
   res.setHeader("X-Content-Type-Options", "nosniff");
@@ -230,7 +244,7 @@ function setAuthorizationSecurityHeaders(res: Response, nonce: string): void {
   res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
   res.setHeader(
     "Content-Security-Policy",
-    `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`,
+    `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; img-src 'self'; form-action ${formAction}; frame-ancestors 'none'; base-uri 'none'`,
   );
 }
 
@@ -240,7 +254,7 @@ function sendAuthorizationForm(
   status: number,
 ): void {
   const nonce = authorizationNonce();
-  setAuthorizationSecurityHeaders(res, nonce);
+  setAuthorizationSecurityHeaders(res, nonce, params.fields.redirect_uri);
   res.status(status).setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(formHtml({ ...params, nonce }));
 }

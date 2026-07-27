@@ -253,7 +253,21 @@ function parseOAuthScopes(value: string | undefined): AuvryntScope[] {
   return Array.from(new Set(requested)) as AuvryntScope[];
 }
 
-function parseOAuthConfig(env: NodeJS.ProcessEnv, ownerToken: string | undefined): OAuthConfig {
+export function oauthScopesForIntegrations(integrations: AuvryntIntegrationsConfig): AuvryntScope[] {
+  const scopes: AuvryntScope[] = ["auvrynt:read", "auvrynt:write"];
+  if (integrations.playwright) scopes.push("auvrynt:web", "auvrynt:process");
+  if (integrations.godotGdscript || integrations.godotCsharp) scopes.push("auvrynt:godot");
+  if (integrations.godotCsharp) scopes.push("auvrynt:software", "auvrynt:process");
+  if (integrations.blender) scopes.push("auvrynt:blender");
+  if (integrations.serena) scopes.push("auvrynt:serena");
+  return Array.from(new Set(scopes));
+}
+
+function parseOAuthConfig(
+  env: NodeJS.ProcessEnv,
+  ownerToken: string | undefined,
+  integrations: AuvryntIntegrationsConfig,
+): OAuthConfig {
   return {
     ownerToken: parseRequiredSecret(env.AUVRYNT_OAUTH_OWNER_TOKEN ?? ownerToken, "AUVRYNT_OAUTH_OWNER_TOKEN"),
     accessTokenTtlSeconds: parsePositiveInteger(
@@ -266,7 +280,9 @@ function parseOAuthConfig(env: NodeJS.ProcessEnv, ownerToken: string | undefined
       DEFAULT_OAUTH_REFRESH_TOKEN_TTL_SECONDS,
       "AUVRYNT_OAUTH_REFRESH_TOKEN_TTL_SECONDS",
     ),
-    scopes: parseOAuthScopes(env.AUVRYNT_OAUTH_SCOPES),
+    scopes: parseOAuthScopes(env.AUVRYNT_OAUTH_SCOPES)
+      .filter((scope) => oauthScopesForIntegrations(integrations).includes(scope)
+        || (scope === "auvrynt:blender-python" && integrations.blender)),
     allowedRedirectHosts: parseStringList(env.AUVRYNT_OAUTH_ALLOWED_REDIRECT_HOSTS, [
       "chatgpt.com",
       "claude.ai",
@@ -353,6 +369,7 @@ function parseIntegrationsConfig(env: NodeJS.ProcessEnv, filesConfig: AuvryntUse
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const files = loadAuvryntFiles(env);
+  const integrations = parseIntegrationsConfig(env, files.config);
   const host = env.HOST ?? files.config.host ?? "127.0.0.1";
   const port = parsePort(env.PORT ?? files.config.port);
   const publicBaseUrl = parsePublicBaseUrl(
@@ -370,7 +387,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   return {
     host,
     port,
-    oauth: parseOAuthConfig(env, files.auth.ownerToken),
+    oauth: parseOAuthConfig(env, files.auth.ownerToken, integrations),
     allowedRoots: parseAllowedRoots(env.AUVRYNT_ALLOWED_ROOTS ?? files.config.allowedRoots),
     allowedHosts: parseAllowedHosts(env.AUVRYNT_ALLOWED_HOSTS, derivedAllowedHosts),
     publicBaseUrl,
@@ -385,7 +402,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     logging: parseLoggingConfig(env),
     serena: parseSerenaConfig(env, files.config),
     executables: parseExecutablesConfig(env, files.config),
-    integrations: parseIntegrationsConfig(env, files.config),
+    integrations,
   };
 }
 

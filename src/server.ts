@@ -17,7 +17,7 @@ import {
 import express from "express";
 import type { Request, Response } from "express";
 import * as z from "zod/v4";
-import { loadConfig, type AuvryntScope, type ServerConfig, type WidgetMode } from "./config.js";
+import { loadConfig, oauthScopesForIntegrations, type AuvryntScope, type ServerConfig, type WidgetMode } from "./config.js";
 import {
   logEvent,
   requestIp,
@@ -3566,6 +3566,14 @@ export function createServer(config = loadConfig()): RunningServer {
       reconfiguring = true;
       try {
         Object.assign(config.integrations, integrations);
+        const allowBlenderPython = config.oauth.scopes.includes("auvrynt:blender-python");
+        const nextScopes = oauthScopesForIntegrations(config.integrations);
+        if (allowBlenderPython && config.integrations.blender) nextScopes.push("auvrynt:blender-python");
+        config.oauth.scopes.splice(
+          0,
+          config.oauth.scopes.length,
+          ...nextScopes,
+        );
         if (options?.serenaExecutable) config.serena.executable = options.serenaExecutable;
         config.serena.enabled = integrations.serena;
         serenaManager.updateConfig({

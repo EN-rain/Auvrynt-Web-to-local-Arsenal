@@ -145,7 +145,7 @@ export async function detectSerenaEnvironment(
   const executable = config.executable;
 
   try {
-    const { stdout } = await execFileAsync(executable, ["--version"], { timeout: 10_000 });
+    const { stdout } = await execFileAsync(executable, ["--version"], { timeout: 10_000, windowsHide: true });
     const version = stdout.trim();
     const installationType = executable.includes("uvx") ? "uvx" : "uv-tool";
 
@@ -153,7 +153,7 @@ export async function detectSerenaEnvironment(
     let pythonVersion: string | undefined;
 
     try {
-      const uvResult = await execFileAsync("uv", ["--version"], { timeout: 5_000 });
+      const uvResult = await execFileAsync("uv", ["--version"], { timeout: 5_000, windowsHide: true });
       uvExecutable = uvResult.stdout.trim();
     } catch {
       problems.push("uv not found in PATH. Serena requires uv for updates.");
