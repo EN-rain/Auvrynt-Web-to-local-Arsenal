@@ -105,7 +105,7 @@ When using foreground `auvrynt serve`, the terminal shows request activity. Back
 
 ---
 
-`auvrynt start` starts one temporary Cloudflare tunnel and one Auvrynt server in the background. It does not keep the terminal occupied. The tunnel stays alive while profiles are added or replaced, so its URL remains the same until `auvrynt stop` or the Cloudflare process itself exits. A second start asks before changing the existing instance; use `--replace` when running non-interactively.
+`auvrynt start` starts one managed tunnel and one Auvrynt server in the background. Cloudflare is the default; run `auvrynt tunnel` to select ngrok and optionally save a reserved stable HTTPS origin. It does not keep the terminal occupied. The tunnel stays alive while profiles are added or replaced, so its URL remains the same until `auvrynt stop` or the managed tunnel process exits. A second start asks before changing the existing instance; use `--replace` when running non-interactively.
 
 ### Start only what you need
 
@@ -129,9 +129,9 @@ auvrynt add web
 auvrynt start se --replace
 ```
 
-Live profile changes wait until no MCP request is active, then refresh connected MCP sessions so clients can rediscover the tool list. They do not restart Auvrynt, Cloudflare, Blender, Godot, Serena, or tracked development processes. Starting with `--replace` from a different directory gracefully changes the managed workspace while preserving the tunnel.
+Live profile changes wait until no tool execution is active, then update the local integration gate without closing connected MCP sessions. They do not restart Auvrynt, the managed tunnel, Blender, Godot, Serena, or tracked development processes. Starting with `--replace` from a different directory gracefully changes the managed workspace while preserving the tunnel.
 
-`auvrynt restart` reloads Auvrynt code while keeping the current Cloudflare tunnel and URL. `auvrynt restart hard` stops and recreates both. `auvrynt stop` gracefully stops Auvrynt and then its Cloudflare tunnel. These commands do not close Blender or Godot. Lifecycle commands are serialized, so two terminals cannot create duplicate managed instances.
+`auvrynt restart` reloads Auvrynt code while keeping the current managed tunnel and URL. `auvrynt restart hard` stops and recreates both. `auvrynt stop` gracefully stops Auvrynt and then its tunnel. These commands do not close Blender or Godot. Lifecycle commands are serialized, so two terminals cannot create duplicate managed instances. Assigned Cloudflare/ngrok URLs may change after a hard restart; a reserved `AUVRYNT_NGROK_URL` remains stable while available.
 
 Generated artifacts are kept under the active workspace's `auvrynt-logs` directory instead of being scattered through the project. Playwright screenshots, responsive captures, image diffs, sprite frames, application captures, Godot exports, Blender exports, and Blender checkpoints use organized subdirectories such as `auvrynt-logs/playwright` and `auvrynt-logs/images`. Normal source edits and generated project source files still use their requested project paths.
 
@@ -153,9 +153,9 @@ auvrynt token
 
 It is stored locally in `~/.auvrynt/auth.json`. Keep it private and do not paste it into the MCP client itself.
 
-Client registrations and hashed authorization sessions are stored locally and survive `auvrynt restart` and `auvrynt change` while the same Cloudflare URL remains active. You should not need to approve the connector again after either command.
+Client registrations and hashed authorization sessions are stored locally and survive `auvrynt restart` and `auvrynt change` while the same public origin remains active. You should not need to approve the connector again after either command.
 
-Authorization is required again after `auvrynt restart hard`, `auvrynt stop` followed by a new start, `auvrynt token reset`, or any other change that creates a new Cloudflare URL. If a connector already reports `invalid id`, its registration was lost before persistence was enabled; remove and recreate that connector once with the current `/mcp` URL.
+Authorization is required again after `auvrynt token reset` or any operation that changes the public origin, including a hard restart of an assigned tunnel. A hard restart using the same reserved ngrok origin keeps the OAuth issuer/resource origin unchanged. If a connector already reports `invalid id`, remove and recreate that connector once with the current `/mcp` URL.
 
 ---
 
@@ -169,9 +169,10 @@ Authorization is required again after `auvrynt restart hard`, `auvrynt stop` fol
 | `auvrynt start ... --replace` | Live-replace profiles, or switch the managed workspace without changing the tunnel |
 | `auvrynt add <profiles>` | Add profiles live without restarting the server or tunnel |
 | `auvrynt change` | Switch the running workspace to the current directory while preserving profiles and tunnel URL |
-| `auvrynt restart [profiles]` | Restart only Auvrynt while preserving the current Cloudflare URL |
-| `auvrynt restart hard [profiles]` | Stop and recreate both Auvrynt and its Cloudflare tunnel |
-| `auvrynt stop` | Stop Auvrynt and its Cloudflare tunnel |
+| `auvrynt tunnel` | Select Cloudflare or ngrok and optionally configure a stable ngrok HTTPS origin |
+| `auvrynt restart [profiles]` | Restart only Auvrynt while preserving the current managed tunnel URL |
+| `auvrynt restart hard [profiles]` | Stop and recreate both Auvrynt and its managed tunnel |
+| `auvrynt stop` | Stop Auvrynt and its managed tunnel |
 | `auvrynt serve` | Start the server with verbose log output |
 | `auvrynt doctor` | Show your config, Node version, and dependency health |
 | `auvrynt status` | Show local MCP and integration status without modifying integration files |
@@ -258,8 +259,10 @@ See [Configuration Reference](docs/configuration.md) for all options.
 | Document | Description |
 |---|---|
 | [Setup Guide](docs/setup.md) | Step-by-step tunnel and client setup |
+| [Source Layout](docs/source-layout.md) | Runtime domains, entry points, and root compatibility facades |
 | [Configuration Reference](docs/configuration.md) | All env vars and config options |
 | [ChatGPT Coding Workflow](docs/chatgpt-coding-workflow.md) | How to use Auvrynt day-to-day |
+| [Long Projects and Multiple Agents](docs/multi-agent-and-long-projects.md) | Checklist continuity, rooms, directories, and worktrees |
 | [Security Model](docs/security.md) | Path isolation, auth, and threat model |
 | [Troubleshooting Gotchas](docs/gotchas.md) | Common issues and fixes |
 

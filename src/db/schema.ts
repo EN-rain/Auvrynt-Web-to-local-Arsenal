@@ -45,6 +45,9 @@ export const artifacts = sqliteTable(
     workspaceSessionId: text("workspace_session_id")
       .notNull()
       .references(() => workspaceSessions.id, { onDelete: "cascade" }),
+    ownerClientId: text("owner_client_id").notNull(),
+    status: text("status").notNull().default("available"),
+    sha256: text("sha_256"),
     path: text("path").notNull(),
     mimeType: text("mime_type"),
     toolName: text("tool_name"),
@@ -53,6 +56,8 @@ export const artifacts = sqliteTable(
   },
   (table) => [
     index("artifacts_workspace_idx").on(table.workspaceSessionId, table.createdAt),
+    index("artifacts_status_idx").on(table.status),
+    index("artifacts_owner_idx").on(table.ownerClientId),
   ],
 );
 
@@ -60,5 +65,25 @@ export type WorkspaceSessionRow = typeof workspaceSessions.$inferSelect;
 export type NewWorkspaceSessionRow = typeof workspaceSessions.$inferInsert;
 export type LoadedAgentFileRow = typeof loadedAgentFiles.$inferSelect;
 export type NewLoadedAgentFileRow = typeof loadedAgentFiles.$inferInsert;
+export const rooms = sqliteTable(
+  "rooms",
+  {
+    id: text("id").primaryKey(),
+    ownerClientId: text("owner_client_id").notNull(),
+    workspaceId: text("workspace_id").notNull().unique(),
+    state: text("state").notNull().default("active"),
+    createdAt: text("created_at").notNull(),
+    lastActivityAt: text("last_activity_at").notNull(),
+    closedAt: text("closed_at"),
+  },
+  (table) => [
+    index("rooms_workspace_idx").on(table.workspaceId),
+    index("rooms_owner_idx").on(table.ownerClientId),
+  ],
+);
+
+export type RoomRow = typeof rooms.$inferSelect;
+export type NewRoomRow = typeof rooms.$inferInsert;
+
 export type ArtifactRow = typeof artifacts.$inferSelect;
 export type NewArtifactRow = typeof artifacts.$inferInsert;

@@ -40,6 +40,14 @@ temp/
 *.swp
 *.swo
 
+# Local audit and one-off migration notes
+.audit-logs/
+AUVRYNT_CONNECTION_AND_DASHBOARD_CHANGES.md
+CONTINUE_SOURCE_REORGANIZATION_AGENT.md
+LOCAL_AGENT_FULL_PROJECT_AUDIT_GUIDE.md
+LOCAL_AGENT_FULL_PROJECT_AUDIT_REPORT.md
+SOURCE_REORGANIZATION_AUDIT.md
+
 # Auvrynt local state and checkpoints
 .auvrynt/
 auvrynt-state/

@@ -34,6 +34,26 @@ assert.throws(
   /redirect_uri is not allowed/i,
 );
 
+let protectedClientId = "";
+const capacityStore = new InMemoryOAuthClientsStore(
+  ["example.com"],
+  [],
+  undefined,
+  (clientId) => clientId === protectedClientId,
+);
+const capacityClientIds: string[] = [];
+for (let index = 0; index < 128; index++) {
+  capacityClientIds.push(
+    capacityStore.registerClient(client(`https://example.com/callback/${index}`) as any).client_id,
+  );
+}
+protectedClientId = capacityClientIds[0];
+const replacementClient = capacityStore.registerClient(client("https://example.com/callback/replacement") as any);
+assert.ok(capacityStore.getClient(protectedClientId));
+assert.equal(capacityStore.getClient(capacityClientIds[1]), undefined);
+assert.ok(capacityStore.getClient(replacementClient.client_id));
+assert.equal(capacityStore.allClients().length, 128);
+
 const stateDir = await mkdtemp(join(tmpdir(), "auvrynt-oauth-"));
 try {
   const stateFile = join(stateDir, "oauth-state.json");
@@ -42,7 +62,7 @@ try {
     ownerToken: "test-owner-token",
     accessTokenTtlSeconds: 3600,
     refreshTokenTtlSeconds: 3600,
-    scopes: ["auvrynt:read"],
+    scopes: ["auvrynt:read", "auvrynt:web"],
     allowedRedirectHosts: ["localhost"],
   };
   const first = new SingleUserOAuthProvider(config, resource, stateFile);
@@ -67,10 +87,18 @@ try {
   const tokens = await first.exchangeAuthorizationCode(registered, code);
 
   const restarted = new SingleUserOAuthProvider(config, resource, stateFile);
-  const restoredClient = restarted.clientsStore.getClient(registered.client_id);
+  const restoredClient = await restarted.clientsStore.getClient(registered.client_id);
   assert.ok(restoredClient);
   const authInfo = await restarted.verifyAccessToken(tokens.access_token);
   assert.equal(authInfo.clientId, registered.client_id);
+  assert.deepEqual(authInfo.scopes, ["auvrynt:read"]);
+
+  assert.equal(restarted.grantScopesToExistingTokens(["auvrynt:web", "not-configured"]), 2);
+  const expandedAuthInfo = await restarted.verifyAccessToken(tokens.access_token);
+  assert.deepEqual(expandedAuthInfo.scopes, ["auvrynt:read", "auvrynt:web"]);
+  assert.ok(tokens.refresh_token);
+  const refreshed = await restarted.exchangeRefreshToken(restoredClient, tokens.refresh_token);
+  assert.match(refreshed.scope ?? "", /auvrynt:web/);
 } finally {
   await rm(stateDir, { recursive: true, force: true });
 }

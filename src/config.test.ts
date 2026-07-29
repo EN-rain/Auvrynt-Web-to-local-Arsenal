@@ -119,7 +119,8 @@ assert.deepEqual(
     AUVRYNT_SERENA_INTEGRATION_ENABLED: "0",
     AUVRYNT_PLAYWRIGHT_ENABLED: "0",
   }).oauth.scopes,
-  ["auvrynt:read", "auvrynt:write", "auvrynt:blender"],
+  loadConfig(baseEnv).oauth.scopes,
+  "local profiles must not shrink the durable OAuth capability envelope",
 );
 assert.deepEqual(
   loadConfig({ ...baseEnv, AUVRYNT_OAUTH_ALLOWED_REDIRECT_HOSTS: "chatgpt.com,example.com" }).oauth
@@ -160,6 +161,14 @@ assert.equal(
 assert.throws(
   () => loadConfig({ ...baseEnv, AUVRYNT_PUBLIC_BASE_URL: "ftp://example.com" }),
   /Invalid AUVRYNT_PUBLIC_BASE_URL scheme/,
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, AUVRYNT_PUBLIC_BASE_URL: "http://example.com" }),
+  /must use HTTPS unless it points to a loopback host/,
+);
+assert.equal(
+  loadConfig({ ...baseEnv, AUVRYNT_PUBLIC_BASE_URL: "http://localhost:49321" }).publicBaseUrl,
+  "http://localhost:49321",
 );
 assert.throws(
   () => loadConfig({ ...baseEnv, AUVRYNT_PUBLIC_BASE_URL: "https://user:pass@example.com" }),

@@ -8,6 +8,7 @@ The security model is simple:
 - you choose a narrow filesystem allowlist
 - the MCP endpoint requires OAuth approval with your Owner token
 - OAuth scopes are enforced per tool call
+- workspace rooms are owned by the OAuth client that opened them
 - Host headers are allowlisted from the configured public URL
 - forwarded client IPs are trusted only from an immediate loopback proxy
 - every coding action happens through explicit MCP tool calls
@@ -33,6 +34,18 @@ C:\
 
 The narrower the root, the easier it is to reason about what the MCP client can
 reach.
+
+## Workspace Room Ownership
+
+Every workspace opened through MCP is assigned to the authenticated OAuth client
+that created it. Workspace-bound tools validate this ownership before resolving
+the filesystem root or invoking an integration. Another OAuth client cannot use
+a leaked `workspaceId` to read, edit, run processes, or call integration tools in
+that room.
+
+Room ownership does not provide file locking. Two owner-protected workspaces can
+still point to the same checkout, so use separate managed worktrees when multiple
+clients must edit one Git repository concurrently.
 
 ## Owner Token
 

@@ -55,6 +55,14 @@ try {
   assert.equal(missingWorkspace.workspace.mode, "checkout");
   assert.equal((await stat(missingWorkspaceRoot)).isDirectory(), true);
 
+  registry.markClosed(missingWorkspace.workspace.id);
+  assert.throws(
+    () => registry.getWorkspace(missingWorkspace.workspace.id),
+    /Unknown workspaceId|has been closed/,
+  );
+  const reopenedMissingWorkspace = await registry.openWorkspace(missingWorkspaceRoot);
+  assert.notEqual(reopenedMissingWorkspace.workspace.id, missingWorkspace.workspace.id);
+
   await assert.rejects(
     () => registry.openWorkspace({ path: root, mode: "worktree" }),
     (error: unknown) =>

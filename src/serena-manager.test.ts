@@ -169,6 +169,18 @@ try {
   assert.equal(mgr.getSessionInfo().length, 0);
 }
 
+// --- SerenaManager cleanup absorbs close failures and evicts the session ---
+{
+  const mgr = new SerenaManager(makeConfig({ enabled: false }));
+  const session = buildFakeSession("ws_cleanup", testDir, ["find_symbol"]);
+  session.client.close = async () => { throw new Error("client close failed"); };
+  session.transport.close = async () => { throw new Error("transport close failed"); };
+  (mgr as any).sessions.set(session.sessionId, session);
+
+  await assert.doesNotReject(() => mgr.stopSession(session.sessionId));
+  assert.equal(mgr.getSessionInfo().length, 0);
+}
+
 // --- SerenaManager healthCheck (no session) ---
 {
   const mgr = new SerenaManager(makeConfig({ enabled: false }));

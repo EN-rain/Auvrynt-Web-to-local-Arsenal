@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "./config.js";
 import { createServer, requiredScopesForToolCall, requiredScopesForToolName, toolIntegrationEnabled } from "./server.js";
+import { hardenHttpServer } from "./http-server-hardening.js";
 
 const stateDir = await mkdtemp(join(tmpdir(), "auvrynt-server-guardrails-"));
 const config = loadConfig({
@@ -21,6 +22,10 @@ const config = loadConfig({
 
 assert.deepEqual(requiredScopesForToolName("read_file"), ["auvrynt:read"]);
 assert.deepEqual(requiredScopesForToolName("write_file"), ["auvrynt:write"]);
+assert.deepEqual(requiredScopesForToolName("open_workspace"), ["auvrynt:read", "auvrynt:write"]);
+assert.deepEqual(requiredScopesForToolCall("open_workspace", { mode: "checkout" }), ["auvrynt:read", "auvrynt:write"]);
+assert.deepEqual(requiredScopesForToolCall("open_workspace", { mode: "worktree" }), ["auvrynt:read", "auvrynt:write", "auvrynt:process"]);
+assert.deepEqual(requiredScopesForToolName("close_workspace"), ["auvrynt:write", "auvrynt:process"]);
 assert.deepEqual(requiredScopesForToolName("start_process"), ["auvrynt:process"]);
 assert.deepEqual(requiredScopesForToolName("start_dev_server"), ["auvrynt:web", "auvrynt:process"]);
 assert.deepEqual(requiredScopesForToolName("capture_page_screenshot"), ["auvrynt:web", "auvrynt:write"]);
@@ -46,6 +51,7 @@ assert.equal(toolIntegrationEnabled(config, "read_file"), true);
 
 const running = createServer(config);
 try {
+  const oauthScopesBeforeUpdate = [...running.config.oauth.scopes];
   const update = await running.updateIntegrations({
     godotGdscript: false,
     godotCsharp: false,
@@ -54,15 +60,95 @@ try {
     playwright: true,
   });
   assert.equal(update.updated, true);
+  assert.equal(update.closedSessions, 0);
+  assert.deepEqual(running.config.oauth.scopes, oauthScopesBeforeUpdate);
   assert.equal(running.config.integrations.blender, true);
   assert.equal(running.config.integrations.playwright, true);
   assert.equal(toolIntegrationEnabled(running.config, "blender_get_scene_info"), true);
   assert.equal(toolIntegrationEnabled(running.config, "inspect_page"), true);
 
   const httpServer = running.app.listen(0, "127.0.0.1");
+  hardenHttpServer(httpServer);
   try {
     await new Promise<void>((resolveListen) => httpServer.once("listening", resolveListen));
     const { port } = httpServer.address() as AddressInfo;
+    const publicHealth = await fetch(`http://127.0.0.1:${port}/healthz`, {
+      headers: { "x-forwarded-for": "203.0.113.10" },
+    });
+    assert.equal(publicHealth.status, 200);
+    assert.deepEqual(await publicHealth.json(), { ok: true });
+    assert.equal(publicHealth.headers.get("x-powered-by"), null);
+    assert.equal(publicHealth.headers.get("cache-control"), "no-store");
+
+    const publicReady = await fetch(`http://127.0.0.1:${port}/readyz`, {
+      headers: { "x-forwarded-for": "203.0.113.10" },
+    });
+    assert.equal(publicReady.status, 200);
+    assert.deepEqual(await publicReady.json(), { ready: true });
+
+    const localReady = await fetch(`http://127.0.0.1:${port}/readyz`);
+    const localReadyBody = await localReady.json() as Record<string, unknown>;
+    assert.equal(localReady.status, 200);
+    assert.equal(localReadyBody.ready, true);
+    assert.ok("memory" in localReadyBody);
+    assert.ok("sessionsByState" in localReadyBody);
+
+    const localDashboard = await fetch(`http://127.0.0.1:${port}/dashboard`);
+    const localDashboardHtml = await localDashboard.text();
+    assert.equal(localDashboard.status, 200);
+    assert.match(localDashboard.headers.get("content-type") ?? "", /^text\/html/);
+    assert.match(localDashboard.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/);
+    assert.match(localDashboardHtml, /Auvrynt Dashboard/);
+    assert.match(localDashboardHtml, /Local control center/);
+    assert.match(localDashboardHtml, /Commands/);
+    assert.match(localDashboardHtml, /Recent logs/);
+    assert.match(localDashboardHtml, /auvrynt start godotcs/);
+    assert.match(localDashboardHtml, /auvrynt restart hard/);
+    assert.match(localDashboardHtml, /AUVRYNT_PUBLIC_BASE_URL/);
+    assert.match(localDashboardHtml, /data-integration/);
+    assert.match(localDashboardHtml, /id="restart"/);
+    assert.match(localDashboardHtml, /id="stop"/);
+    assert.match(localDashboardHtml, /firstVisibleAnchor/);
+    assert.match(localDashboardHtml, /data-log-filter="tool"/);
+    assert.doesNotMatch(localDashboardHtml, /owner-token-that-is-long-enough/);
+
+    const localDashboardData = await fetch(`http://127.0.0.1:${port}/dashboard/data`);
+    const localDashboardBody = await localDashboardData.json() as Record<string, unknown>;
+    assert.equal(localDashboardData.status, 200);
+    assert.ok(Array.isArray(localDashboardBody.integrations));
+    assert.ok(Array.isArray(localDashboardBody.logs));
+
+    const publicDashboard = await fetch(`http://127.0.0.1:${port}/dashboard`, {
+      headers: { "x-forwarded-for": "203.0.113.10" },
+    });
+    assert.equal(publicDashboard.status, 404);
+    const publicDashboardData = await fetch(`http://127.0.0.1:${port}/dashboard/data`, {
+      headers: { "x-forwarded-for": "203.0.113.10" },
+    });
+    assert.equal(publicDashboardData.status, 404);
+
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const registrationAttempt = await fetch(`http://127.0.0.1:${port}/register`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-forwarded-for": "198.51.100.20",
+        },
+        body: "{}",
+      });
+      assert.notEqual(registrationAttempt.status, 429);
+    }
+    const registrationLimited = await fetch(`http://127.0.0.1:${port}/register`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-forwarded-for": "198.51.100.20",
+      },
+      body: "{}",
+    });
+    assert.equal(registrationLimited.status, 429);
+    assert.ok(Number(registrationLimited.headers.get("retry-after")) >= 1);
+
     const response = await fetch(`http://127.0.0.1:${port}/mcp`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -70,8 +156,13 @@ try {
     });
     assert.equal(response.status, 401);
   } finally {
+    httpServer.closeIdleConnections();
     await new Promise<void>((resolveClose, rejectClose) => {
-      httpServer.close((error) => error ? rejectClose(error) : resolveClose());
+      const forceClose = setTimeout(() => httpServer.closeAllConnections(), 1_000);
+      httpServer.close((error) => {
+        clearTimeout(forceClose);
+        error ? rejectClose(error) : resolveClose();
+      });
     });
   }
 } finally {

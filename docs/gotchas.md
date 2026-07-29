@@ -67,9 +67,33 @@ npx auvrynt config set publicBaseUrl https://your-tunnel-host.example.com
 
 ## Tunnel URL Changed
 
-The managed quick-tunnel URL stays unchanged across `auvrynt add` and
-same-directory `auvrynt start ... --replace` and `auvrynt restart`. It normally
-changes after `auvrynt restart hard` or `auvrynt stop` followed by a new start.
+The managed tunnel URL stays unchanged across `auvrynt add`, same-directory `auvrynt start ... --replace`, and `auvrynt restart`. An assigned Cloudflare or ngrok URL normally changes after `auvrynt restart hard` or `auvrynt stop` followed by a new start. A reserved ngrok origin configured through `auvrynt tunnel` or `AUVRYNT_NGROK_URL` remains stable as long as that reservation is available.
+
+Auvrynt reads ngrok's structured startup logs for the URL created by the exact child process it launched. It does not query the shared `127.0.0.1:4040` inspector API, which avoids accidentally adopting a different local ngrok process when multiple agents are running.
+
+If the public tunnel temporarily becomes unreachable while the local server is healthy, Auvrynt leaves the existing tunnel process in place so it can reconnect with the same URL. It does not silently replace the tunnel because a replacement assigned URL would no longer match the running OAuth issuer and resource configuration. Use `auvrynt restart hard` only when you intentionally accept replacement behavior or have configured a stable ngrok origin.
+
+Managed background starts also schedule bounded crash recovery for fatal Node.js errors. The replacement server waits for the failed process to exit, reuses the same managed tunnel URL and profile arguments, and stops after five restart attempts in ten minutes to prevent a crash loop.
+
+## Repeated 502 During Extended Use
+
+A repeated 502 does not always mean the tunnel itself failed. It can also mean the local process was terminated, a long-running response stayed silent too long, or a tool result exceeded a connector/proxy payload limit.
+
+Auvrynt now protects the long-use paths by:
+
+- Sending an SSE heartbeat every 15 seconds during long MCP streams.
+- Bounding replay history by time, count, and bytes.
+- Truncating oversized text/metadata and omitting connector-dangerous inline binary.
+- Saving oversized screenshots and renders locally instead of embedding large base64 responses.
+- Force-closing stuck Chromium processes.
+- Applying backpressure to Blender and Godot queues.
+- Releasing closed room/workspace state and failed Serena sessions.
+
+When Auvrynt reports that a result was truncated, retry with a narrower read range, fewer search results, or a smaller screenshot/render. Use `start_process` rather than a blocking shell request for servers or other indefinitely running commands.
+
+## Profile Changes While Connected
+
+`auvrynt add`, `auvrynt change`, and same-directory `auvrynt start --replace` no longer close MCP sessions. Long-lived SSE requests do not block the change. If a tool is currently executing, the local control request retries transient `409`, `429`, `502`, `503`, and `504` responses before reporting failure.
 
 For a stable independently managed URL, use foreground mode:
 
