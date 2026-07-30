@@ -11,6 +11,7 @@ import { formatPathForPrompt } from "../../skills.js";
 import { formatAgentsPath, type WorkspaceRegistry } from "../../workspaces.js";
 import { registerAppTool } from "../mcp-tool-registrar.js";
 import { MUTATING_ANNOTATIONS, PROCESS_ANNOTATIONS, toolWidgetDescriptorMeta } from "../tool-registration-shared.js";
+import type { WorkspaceChangeTracker } from "../workspace-analytics.js";
 
 const workspaceSkillOutputSchema = z.object({
   name: z.string(),
@@ -38,6 +39,7 @@ export function registerWorkspaceLifecycleTools(
   processManager: ProcessManager,
   roomRegistry: RoomRegistry,
   sessionRegistry: SessionRegistry,
+  workspaceChanges: WorkspaceChangeTracker,
   logToolCall: LogToolCall,
 ): void {
   registerAppTool(server, "open_workspace", {
@@ -68,6 +70,7 @@ export function registerWorkspaceLifecycleTools(
   }, async ({ path, mode, baseRef }) => {
     const startedAt = performance.now();
     const { workspace, agentsFiles, availableAgentsFiles } = await workspaces.openWorkspace({ path, mode, baseRef });
+    workspaceChanges.activateWorkspace(workspace.id, workspace.root);
     const ctx = getRequestContext();
     if (ctx) {
       const room = roomRegistry.create(ctx.ownerClientId, workspace.id);

@@ -62,10 +62,18 @@ const appRoot = maybeAppRoot;
 void boot();
 
 async function boot(): Promise<void> {
+  const previewCard = previewCardFromLocation();
+  if (previewCard) {
+    connected = true;
+    card = previewCard;
+    render();
+    return;
+  }
+
   render();
 
   app = new App(
-    { name: "auvrynt-tool-cards", version: "0.4.0" },
+    { name: "auvrynt-tool-cards", version: "0.6.0" },
     {},
   );
 
@@ -122,6 +130,31 @@ async function boot(): Promise<void> {
   render();
 }
 
+function previewCardFromLocation(): ToolResultCard | null {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("preview") !== "1") return null;
+
+  const requestedTool = params.get("tool") ?? "read_file";
+  const tool: ToolName = isToolName(requestedTool) ? requestedTool : "read_file";
+  const path = params.get("path") ?? "KNOWN_ISSUES.md";
+  const lines = Math.max(0, Number(params.get("lines") ?? "42") || 0);
+
+  return {
+    tool,
+    path,
+    status: "success",
+    summary: { lines },
+    payload: {
+      content: [
+        {
+          type: "text",
+          text: "This is the exact Auvrynt tool-card bundle currently built by the project. Expand the card to preview its payload area.",
+        },
+      ],
+    },
+  };
+}
+
 function applyHostContext(): void {
   if (hostContext?.theme) applyDocumentTheme(hostContext.theme);
   if (hostContext?.styles?.variables) {
@@ -141,17 +174,21 @@ function render(): void {
   unmountPayload();
 
   if (connectionError) {
-    renderEmpty(connectionError, "error");
+    renderEmpty("Connection unavailable", connectionError, "error");
     return;
   }
 
   if (!connected) {
-    renderEmpty("Connecting to host...");
+    renderEmpty("Connecting to Auvrynt", "Establishing a secure link with the host.", "loading");
     return;
   }
 
   if (!card) {
-    renderEmpty(errorMessage ?? "Waiting for a tool result.", errorMessage ? "error" : "muted");
+    renderEmpty(
+      errorMessage ? "Tool result unavailable" : "Waiting for tool result",
+      errorMessage ?? "Auvrynt will display the next tool response here.",
+      errorMessage ? "error" : "loading",
+    );
     return;
   }
 
@@ -209,9 +246,24 @@ function render(): void {
   renderPayloadIfNeeded();
 }
 
-function renderEmpty(message: string, tone: "muted" | "error" = "muted"): void {
+function renderEmpty(
+  title: string,
+  detail: string,
+  tone: "loading" | "error" | "muted" = "muted",
+): void {
   const main = element("main", { className: "shell" });
-  main.append(element("section", { className: `empty ${tone}`, text: message }));
+  const section = element("section", { className: `empty ${tone}` });
+  section.setAttribute("role", tone === "error" ? "alert" : "status");
+  section.setAttribute("aria-live", tone === "error" ? "assertive" : "polite");
+
+  const indicator = element("span", { className: "empty-indicator", ariaHidden: "true" });
+  const copy = element("span", { className: "empty-copy" });
+  copy.append(
+    element("span", { className: "empty-title", text: title }),
+    element("span", { className: "empty-detail", text: detail, title: detail }),
+  );
+  section.append(indicator, copy);
+  main.append(section);
   appRoot.replaceChildren(main);
 }
 

@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildNgrokArgs, extractNgrokPublicUrl, ngrokWindowsDownloadUrl, startNgrokTunnel } from "./ngrok-tunnel.js";
+import { tunnelCommandMatches } from "./tunnel-manager.js";
 import { isGeneratedNgrokUrl, normalizeNgrokUrl, tunnelUrlMatchesProvider } from "./tunnel-utils.js";
 
 assert.equal(normalizeNgrokUrl("demo.ngrok.app"), "https://demo.ngrok.app");
@@ -33,6 +34,16 @@ assert.equal(
 assert.equal(extractNgrokPublicUrl('{"url":"https://unrelated.example.com"}'), undefined);
 assert.equal(ngrokWindowsDownloadUrl("x64"), "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip");
 assert.equal(ngrokWindowsDownloadUrl("arm64"), "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-arm64.zip");
+assert.equal(
+  tunnelCommandMatches("ngrok", 49321, '"C:\\Program Files\\ngrok.exe" http 49321 --log=stdout --log-format=json'),
+  true,
+);
+assert.equal(tunnelCommandMatches("ngrok", 49321, "ngrok http 49322 --log=stdout"), false);
+assert.equal(
+  tunnelCommandMatches("cloudflare", 49321, "cloudflared tunnel --no-autoupdate --url http://127.0.0.1:49321"),
+  true,
+);
+assert.equal(tunnelCommandMatches("cloudflare", 49321, "cloudflared access tcp --hostname example.com"), false);
 
 const tempRoot = await mkdtemp(join(tmpdir(), "auvrynt-ngrok-test-"));
 const fakeAgent = join(tempRoot, "fake-ngrok-agent.mjs");

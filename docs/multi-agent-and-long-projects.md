@@ -78,6 +78,14 @@ Claude  -> open_workspace(path, mode="worktree") -> worktree B
 
 Each agent can then commit or produce a patch independently. A human or designated integration agent should review and merge the results.
 
+## Concurrent MCP sessions
+
+MCP initialization uses an atomic reservation before a transport is connected, so simultaneous client reconnects cannot oversubscribe session capacity. A session executing a request is protected by an in-flight request lease, and active sessions are never evicted to make room for another initialization. When capacity is exhausted, the new initialization is rejected instead of disconnecting an established active session.
+
+Auvrynt removes a transport from the registry as soon as it actually closes. Already disconnected or expired records may be reclaimed under capacity pressure. The defaults allow 128 sessions per OAuth client and 256 total sessions, which accommodates several ChatGPT conversations even when the host creates more than one MCP transport per visible conversation.
+
+Godot, Blender, and Serena calls are serialized through bounded integration queues because those integrations expose shared process or editor state. Other independent tool calls may run concurrently, while request context remains isolated per MCP session. Concurrent workspace opens also reserve capacity before filesystem work, so they cannot oversubscribe the workspace registry.
+
 ## Long-duration limits
 
 Auvrynt's server-side safeguards support long sessions through bounded replay, heartbeats, payload limits, resource cleanup, persisted workspaces, and a 12-hour disconnected-session grace period. This does not guarantee that a model host will autonomously continue for a fixed number of hours. Host context limits, account limits, client disconnects, computer sleep, network loss, and tunnel-provider outages remain external constraints.

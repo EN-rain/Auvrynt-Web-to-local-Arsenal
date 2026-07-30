@@ -18,7 +18,7 @@ export const WRITE_TOOL_ANNOTATIONS = MUTATING_ANNOTATIONS;
 export const EDIT_TOOL_ANNOTATIONS = MUTATING_ANNOTATIONS;
 export const SHELL_TOOL_ANNOTATIONS = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true };
 
-export const WORKSPACE_APP_URI = "ui://auvrynt/workspace-app.html";
+export const WORKSPACE_APP_URI = "ui://auvrynt/workspace-app-v3.html";
 
 type ToolWidgetKind =
   | "workspace"
@@ -41,16 +41,31 @@ function shouldAttachWidget(mode: WidgetMode, kind: ToolWidgetKind): boolean {
   }
 }
 
+const TOOL_INVOCATION_COPY: Record<ToolWidgetKind, { invoking: string; invoked: string }> = {
+  workspace: { invoking: "Opening workspace…", invoked: "Workspace ready" },
+  read: { invoking: "Reading…", invoked: "Read complete" },
+  write: { invoking: "Writing…", invoked: "Write complete" },
+  edit: { invoking: "Applying edit…", invoked: "Edit applied" },
+  search: { invoking: "Searching…", invoked: "Search complete" },
+  directory: { invoking: "Listing files…", invoked: "Files ready" },
+  shell: { invoking: "Running command…", invoked: "Command complete" },
+  show_changes: { invoking: "Reviewing changes…", invoked: "Changes ready" },
+};
+
 export function toolWidgetDescriptorMeta(config: ServerConfig, kind: ToolWidgetKind): {
   _meta: Record<string, unknown>;
 } {
   if (!shouldAttachWidget(config.widgets, kind)) return { _meta: {} };
+  const invocation = TOOL_INVOCATION_COPY[kind];
   return {
     _meta: {
       ui: {
         resourceUri: WORKSPACE_APP_URI,
-        visibility: ["model"],
+        visibility: ["model", "app"],
       },
+      "openai/outputTemplate": WORKSPACE_APP_URI,
+      "openai/toolInvocation/invoking": invocation.invoking,
+      "openai/toolInvocation/invoked": invocation.invoked,
     },
   };
 }

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFile, rename, unlink, writeFile } from "node:fs/promises";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { generateUnifiedPatch } from "@earendil-works/pi-coding-agent";
 import * as z from "zod/v4";
 import type { ServerConfig } from "../../config.js";
 import { logEvent } from "../../logger.js";
@@ -16,6 +17,7 @@ import type { createReviewCheckpointManager } from "../../review-checkpoints.js"
 import { executeViewImage } from "../../view-image.js";
 import type { WorkspaceRegistry } from "../../workspaces.js";
 import { registerAppTool } from "../mcp-tool-registrar.js";
+import { countTextLines, type WorkspaceChangeTracker } from "../workspace-analytics.js";
 import {
   EDIT_TOOL_ANNOTATIONS,
   SHELL_TOOL_ANNOTATIONS,
@@ -88,7 +90,16 @@ function textSummary(content: ToolContent[]): { blocks: number; characters: numb
 }
 
 function contentLineCount(content: string): number {
-  return content.length === 0 ? 0 : content.split(/\r?\n/).length;
+  return countTextLines(content);
+}
+
+async function readExistingTextFile(filePath: string): Promise<string | undefined> {
+  try {
+    return await readFile(filePath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
 }
 
 function countDiffStats(diff: string | undefined): { additions: number; removals: number } {
@@ -103,9 +114,17 @@ function countDiffStats(diff: string | undefined): { additions: number; removals
   return { additions, removals };
 }
 
+function contentLines(content: string): string[] {
+  if (content.length === 0) return [];
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  return lines;
+}
+
 function newFilePatch(path: string, content: string): string {
-  const body = content.split(/\r?\n/).map((line) => `+${line}`).join("\n");
-  return `--- /dev/null\n+++ b/${path}\n@@ -0,0 +1,${contentLineCount(content)} @@\n${body}`;
+  const lines = contentLines(content);
+  const body = lines.map((line) => `+${line}`).join("\n");
+  return `--- /dev/null\n+++ b/${path}\n@@ -0,0 +1,${lines.length} @@\n${body}`;
 }
 
 export function registerCoreFileTools(
@@ -114,6 +133,7 @@ export function registerCoreFileTools(
   workspaces: WorkspaceRegistry,
   reviewCheckpoints: ReturnType<typeof createReviewCheckpointManager>,
   toolNames: CoreFileToolNames,
+  workspaceChanges: WorkspaceChangeTracker,
   logToolCall: LogToolCall,
   logFailedToolResponse: LogFailedToolResponse,
 ): void {
@@ -214,26 +234,37 @@ export function registerCoreFileTools(
     if (input.content.length > MAX_WRITE_SIZE) {
       throw new Error(`File content exceeds maximum write size of ${MAX_WRITE_SIZE} bytes (${input.content.length} bytes provided).`);
     }
-    if (expectedVersion) {
-      try {
-        const currentContent = await readFile(absolutePath, "utf8");
-        const currentHash = createHash("sha256").update(currentContent).digest("hex");
-        if (currentHash !== expectedVersion) {
-          logEvent(config.logging, "warn", "write_version_mismatch", {
-            path: input.path, expectedVersion, actualVersion: currentHash,
-          });
-          return {
-            content: [{ type: "text" as const, text: `Write rejected: file content has changed since last read. Expected version ${expectedVersion.slice(0, 12)}… but actual version is ${currentHash.slice(0, 12)}…. Re-read the file before writing.` }],
-            isError: true,
-          };
-        }
-      } catch {
-        // New file: no existing version to compare.
+    const previousContent = await readExistingTextFile(absolutePath);
+    if (expectedVersion && previousContent !== undefined) {
+      const currentHash = createHash("sha256").update(previousContent).digest("hex");
+      if (currentHash !== expectedVersion) {
+        logEvent(config.logging, "warn", "write_version_mismatch", {
+          path: input.path, expectedVersion, actualVersion: currentHash,
+        });
+        return {
+          content: [{ type: "text" as const, text: `Write rejected: file content has changed since last read. Expected version ${expectedVersion.slice(0, 12)}… but actual version is ${currentHash.slice(0, 12)}…. Re-read the file before writing.` }],
+          isError: true,
+        };
       }
     }
     await safeWriteFile(absolutePath, input.content);
-    const patch = newFilePatch(input.path, input.content);
+    const changed = previousContent !== input.content;
+    const patch = !changed
+      ? ""
+      : previousContent === undefined
+        ? newFilePatch(input.path, input.content)
+        : generateUnifiedPatch(input.path, previousContent, input.content);
     const stats = countDiffStats(patch);
+    if (changed) {
+      workspaceChanges.recordMutation({
+        workspaceId,
+        workspaceRoot: workspace.root,
+        path: input.path,
+        kind: previousContent === undefined ? "created" : "modified",
+        additions: stats.additions,
+        removals: stats.removals,
+      });
+    }
     const content = [{ type: "text" as const, text: `Wrote ${contentLineCount(input.content)} lines to ${input.path}.` }];
     logToolCall(config, {
       tool: toolNames.write, workspaceId, path: input.path, success: true,
@@ -277,6 +308,16 @@ export function registerCoreFileTools(
     }
     const stats = countDiffStats(response.details?.patch ?? response.details?.diff);
     const content = [textBlock(`Edited ${input.path} (+${stats.additions} -${stats.removals}).`)];
+    if (stats.additions > 0 || stats.removals > 0) {
+      workspaceChanges.recordMutation({
+        workspaceId,
+        workspaceRoot: workspace.root,
+        path: input.path,
+        kind: "modified",
+        additions: stats.additions,
+        removals: stats.removals,
+      });
+    }
     logToolCall(config, {
       tool: toolNames.edit, workspaceId, path: input.path, success: true,
       durationMs: Math.round(performance.now() - startedAt),

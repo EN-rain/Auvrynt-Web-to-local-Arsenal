@@ -15,6 +15,8 @@ writeAuvryntConfig({
   host: "127.0.0.1",
   port: 49321,
   allowedRoots: [process.cwd()],
+  maxSessions: 3,
+  maxSessionsPerClient: 2,
   integrations: {
     godotGdscript: false,
     godotCsharp: true,
@@ -32,6 +34,8 @@ writeAuvryntAuth({ ownerToken: "test-owner-token-that-is-long-enough" }, env);
 
 const loaded = loadAuvryntFiles(env);
 assert.equal(loaded.config.port, 49321);
+assert.equal(loaded.config.maxSessions, 3);
+assert.equal(loaded.config.maxSessionsPerClient, 2);
 assert.equal(loaded.config.integrations?.blender, false);
 assert.equal(loaded.config.serena?.maxInstances, 2);
 assert.equal(loaded.auth.ownerToken, "test-owner-token-that-is-long-enough");
@@ -52,4 +56,10 @@ writeFileSync(loaded.configPath, JSON.stringify({ port: 70000 }));
 assert.throws(
   () => loadAuvryntFiles(env),
   /port: Too big|port:.*65535/i,
+);
+
+writeFileSync(loaded.configPath, JSON.stringify({ maxSessions: 100 }));
+assert.throws(
+  () => loadAuvryntFiles(env),
+  /maxSessions: Too big|maxSessions:.*99/i,
 );

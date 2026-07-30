@@ -63,29 +63,44 @@ export interface OpenWorkspaceInput {
   baseRef?: string;
 }
 
+export interface WorkspaceRegistryOptions {
+  maxActiveWorkspaces?: number;
+}
+
 const MAX_ACTIVE_WORKSPACES = 128;
 const ARTIFACT_DIRECTORY = "auvrynt-logs";
 
 export class WorkspaceRegistry {
   private readonly workspaces = new Map<string, Workspace>();
+  private readonly maxActiveWorkspaces: number;
+  private pendingWorkspaceOpens = 0;
 
   constructor(
     private readonly config: ServerConfig,
     private readonly store?: WorkspaceStore,
-  ) {}
+    options: WorkspaceRegistryOptions = {},
+  ) {
+    this.maxActiveWorkspaces = Number.isInteger(options.maxActiveWorkspaces)
+      && options.maxActiveWorkspaces! > 0
+      ? options.maxActiveWorkspaces!
+      : MAX_ACTIVE_WORKSPACES;
+  }
 
   async openWorkspace(input: string | OpenWorkspaceInput): Promise<WorkspaceContext> {
-    if (this.workspaces.size >= MAX_ACTIVE_WORKSPACES) {
-      throw new Error(`Workspace capacity reached (max ${MAX_ACTIVE_WORKSPACES} active workspaces). Close an unused workspace before opening another.`);
+    if (this.workspaces.size + this.pendingWorkspaceOpens >= this.maxActiveWorkspaces) {
+      throw new Error(`Workspace capacity reached (max ${this.maxActiveWorkspaces} active workspaces). Close an unused workspace before opening another.`);
     }
-    const options = typeof input === "string" ? { path: input } : input;
-    const mode = options.mode ?? "checkout";
-
-    if (mode === "worktree") {
-      return this.openWorktreeWorkspace(options.path, options.baseRef);
+    this.pendingWorkspaceOpens += 1;
+    try {
+      const options = typeof input === "string" ? { path: input } : input;
+      const mode = options.mode ?? "checkout";
+      if (mode === "worktree") {
+        return await this.openWorktreeWorkspace(options.path, options.baseRef);
+      }
+      return await this.openCheckoutWorkspace(options.path);
+    } finally {
+      this.pendingWorkspaceOpens = Math.max(0, this.pendingWorkspaceOpens - 1);
     }
-
-    return this.openCheckoutWorkspace(options.path);
   }
 
   markClosed(workspaceId: string): void {
@@ -114,8 +129,8 @@ export class WorkspaceRegistry {
     }
 
     const root = this.assertWorkspaceRootAllowed(session.root, session.mode, session.sourceRoot);
-    if (this.workspaces.size >= MAX_ACTIVE_WORKSPACES) {
-      throw new Error(`Workspace capacity reached (max ${MAX_ACTIVE_WORKSPACES} active workspaces).`);
+    if (this.workspaces.size + this.pendingWorkspaceOpens >= this.maxActiveWorkspaces) {
+      throw new Error(`Workspace capacity reached (max ${this.maxActiveWorkspaces} active workspaces).`);
     }
 
     if (session.mode === "worktree" && !existsSync(root)) {
@@ -257,6 +272,8 @@ export class WorkspaceRegistry {
       activatedSkillDirs: new Set(),
     };
 
+    const agentsFiles = this.loadInitialAgentsFiles(workspace.root);
+    const availableAgentsFiles = await this.findAvailableAgentsFiles(workspace.root, agentsFiles);
     this.store?.createSession({
       id: workspace.id,
       root: workspace.root,
@@ -267,10 +284,22 @@ export class WorkspaceRegistry {
       managed: workspace.worktree?.managed,
     });
     this.workspaces.set(workspace.id, workspace);
-    const agentsFiles = this.loadInitialAgentsFiles(workspace.root);
-    const availableAgentsFiles = await this.findAvailableAgentsFiles(workspace.root, agentsFiles);
-
     return { workspace, agentsFiles, availableAgentsFiles };
+  }
+
+  replaceAllowedRoots(roots: string[]): string[] {
+    this.config.allowedRoots.splice(0, this.config.allowedRoots.length, ...roots);
+    const closedWorkspaceIds: string[] = [];
+    for (const [workspaceId, workspace] of this.workspaces) {
+      try {
+        this.assertWorkspaceRootAllowed(workspace.root, workspace.mode, workspace.sourceRoot);
+      } catch (error) {
+        if (!(error instanceof AccessDeniedError)) throw error;
+        this.markClosed(workspaceId);
+        closedWorkspaceIds.push(workspaceId);
+      }
+    }
+    return closedWorkspaceIds;
   }
 
   private loadSkillsForWorkspace(root: string): Pick<Workspace, "skills" | "skillDiagnostics"> {

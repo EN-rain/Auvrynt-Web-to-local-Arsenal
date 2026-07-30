@@ -82,7 +82,7 @@ export async function godotDotnetBuild(
 
   const start = Date.now();
   try {
-    const { stdout, stderr } = await execFileAsync("dotnet", args, { cwd: dirname(buildTarget) });
+    const { stdout, stderr } = await execFileAsync("dotnet", args, { cwd: dirname(buildTarget), windowsHide: true });
     const parsed = parseGodotBuildDiagnostics(stdout + "\n" + stderr);
     return {
       success: parsed.success,
@@ -118,7 +118,7 @@ export async function godotDotnetClean(
 
   const start = Date.now();
   try {
-    const { stdout, stderr } = await execFileAsync("dotnet", args, { cwd: targetDir });
+    const { stdout, stderr } = await execFileAsync("dotnet", args, { cwd: targetDir, windowsHide: true });
     return {
       success: true,
       durationMs: Date.now() - start,

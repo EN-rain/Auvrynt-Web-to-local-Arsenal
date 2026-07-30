@@ -41,8 +41,12 @@ npx auvrynt config set publicBaseUrl https://auvrynt.example.com
 | `AUVRYNT_OAUTH_OWNER_TOKEN` | Owner token for OAuth approval. Must be at least 16 characters. |
 | `AUVRYNT_WORKTREE_ROOT` | Directory for managed Git worktrees. Defaults to `~/.auvrynt/worktrees`. |
 | `AUVRYNT_STATE_DIR` | Directory for SQLite state. Defaults to `~/.local/share/auvrynt`. |
-| `AUVRYNT_SESSION_IDLE_MS` | MCP session inactivity before disconnect. Defaults to 24 hours. |
-| `AUVRYNT_DISCONNECT_GRACE_MS` | Time a disconnected MCP session is retained for reconnect. Defaults to 12 hours. |
+| `AUVRYNT_SESSION_IDLE_MS` | MCP session inactivity before it becomes reclaimable as disconnected. Defaults to 24 hours. Active sessions are never evicted for capacity. |
+| `AUVRYNT_DISCONNECT_GRACE_MS` | Time an idle-disconnected MCP session is retained without capacity pressure. Defaults to 12 hours. Closed transports are removed immediately. |
+| `AUVRYNT_MAX_SESSIONS` | Maximum reserved and established MCP sessions across all OAuth clients. Defaults to 99 and cannot be raised above 99. The Connectivity tab can persist any value from 1 to 99 when this environment variable is unset. |
+| `AUVRYNT_MAX_SESSIONS_PER_CLIENT` | Maximum reserved and established MCP sessions for one OAuth client. Defaults to the global limit and cannot be raised above 99. The Connectivity tab keeps both persisted limits aligned. |
+| `AUVRYNT_SERENA_ENABLED` | Enables the Serena runtime. When unset, startup enables Serena only if its executable or process is detected. Set to `0` to disable it completely. |
+| `AUVRYNT_SERENA_INTEGRATION_ENABLED` | Controls whether Serena tools are advertised to MCP clients. When unset, detection decides the default. Disabling it removes Serena from active clients' tool lists and stops active Serena sessions. |
 
 ## OAuth
 
@@ -57,7 +61,7 @@ Auvrynt uses a single-user OAuth approval flow.
 
 `auvrynt:blender-python` is intentionally **not** granted by default. Add it to `AUVRYNT_OAUTH_SCOPES` only when a trusted client must use the arbitrary Blender Python escape hatch. Auvrynt enforces scopes per tool call, not only at login.
 
-OAuth scopes are the durable capability envelope; integration profiles are a second local execution gate. Changing profiles updates that local gate without closing MCP sessions or changing the public tunnel URL. When the owner explicitly enables a profile, existing tokens receive only the required scopes that are already allowed by `AUVRYNT_OAUTH_SCOPES`.
+OAuth scopes are the durable capability envelope; integration profiles are a second local execution gate. Changing profiles updates that local gate without closing MCP sessions or changing the public tunnel URL. Disabled integration tools are removed from active MCP tool lists, so agents do not keep planning calls to unavailable integrations. When the owner explicitly enables a profile, existing tokens receive only the required scopes that are already allowed by `AUVRYNT_OAUTH_SCOPES`.
 
 MCP clients discover metadata from:
 

@@ -131,11 +131,11 @@ export async function selfHealStartIntegrations(
     return { serenaExecutable };
   }
 
-  let discovery: LocalIntegrationDiscovery = await discoverLocalIntegrations();
+  let discovery: LocalIntegrationDiscovery = await discoverLocalIntegrations({ forceRefresh: true });
   for (let attempt = 0; attempt < 4; attempt++) {
     if (discovery.ports.auvrynt_godot_bridge) return { serenaExecutable };
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
-    discovery = await discoverLocalIntegrations();
+    discovery = await discoverLocalIntegrations({ forceRefresh: true });
   }
 
   if (processDetected(discovery, "godot")) {
@@ -190,7 +190,7 @@ async function ensureSerenaExecutable(): Promise<string> {
   const installArgs = localSource
     ? ["tool", "install", "--force", "--editable", localSource]
     : ["tool", "install", "--force", MANAGED_SERENA_PACKAGE];
-  execFileSync(uv, installArgs, { stdio: "inherit" });
+  execFileSync(uv, installArgs, { stdio: "inherit", windowsHide: true });
 
   const installed = findCommand("serena") ?? findInstalledExecutable("serena");
   if (!installed) {
@@ -218,7 +218,7 @@ async function ensureUvExecutable(): Promise<string> {
   execFileSync(
     python,
     ["-m", "pip", "install", "--user", MANAGED_UV_PACKAGE],
-    { stdio: "inherit" },
+    { stdio: "inherit", windowsHide: true },
   );
 
   const installed = findCommand("uv") ?? findInstalledExecutable("uv");

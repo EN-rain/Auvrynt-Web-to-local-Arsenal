@@ -29,6 +29,7 @@ import { registerDotnetGodotWindowTools } from "./tools/dotnet-godot-window-tool
 import { registerGodotCsharpTools } from "./tools/godot-csharp-tools-registration.js";
 import { registerGodotGdscriptTools } from "./tools/godot-gdscript-tools-registration.js";
 import { registerBlenderTools } from "./tools/blender-tools-registration.js";
+import type { WorkspaceChangeTracker } from "./workspace-analytics.js";
 
 interface ToolNames {
   openWorkspace: "open_workspace";
@@ -49,6 +50,7 @@ export function createMcpServer(
   processManager: ProcessManager,
   roomRegistry: RoomRegistry,
   sessionRegistry: SessionRegistry,
+  workspaceChanges: WorkspaceChangeTracker,
 ): McpServer {
   const toolNames = toolNamesFor(config);
   const server = new McpServer(
@@ -63,13 +65,28 @@ export function createMcpServer(
   );
   configureMcpToolGuard(server, { config, workspaces, rooms: roomRegistry });
 
+  const widgetCsp = appCsp(config);
+  const widgetMeta = {
+    ui: {
+      csp: widgetCsp,
+      prefersBorder: true,
+    },
+    "openai/widgetDescription":
+      "Compact Auvrynt tool result card showing the action, target path, result count, and expandable output.",
+    "openai/widgetPrefersBorder": true,
+    "openai/widgetCSP": {
+      connect_domains: widgetCsp.connectDomains,
+      resource_domains: widgetCsp.resourceDomains,
+    },
+  };
+
   registerAppResource(
     server,
-    "Auvrynt Diff Card",
+    "Auvrynt Tool Card",
     WORKSPACE_APP_URI,
     {
-      description: "Interactive card for viewing Auvrynt file diffs.",
-      _meta: { ui: { csp: appCsp(config) } },
+      description: "Interactive Auvrynt card for workspace tool results.",
+      _meta: widgetMeta,
     },
     async () => {
       await assertWorkspaceAppAssets();
@@ -79,7 +96,7 @@ export function createMcpServer(
             uri: WORKSPACE_APP_URI,
             mimeType: RESOURCE_MIME_TYPE,
             text: workspaceAppHtml(config),
-            _meta: { ui: { csp: appCsp(config) } },
+            _meta: widgetMeta,
           },
         ],
       };
@@ -94,6 +111,7 @@ export function createMcpServer(
     processManager,
     roomRegistry,
     sessionRegistry,
+    workspaceChanges,
     logToolCall,
   );
   registerCoreFileTools(
@@ -102,6 +120,7 @@ export function createMcpServer(
     workspaces,
     reviewCheckpoints,
     toolNames,
+    workspaceChanges,
     logToolCall,
     logFailedToolResponse,
   );

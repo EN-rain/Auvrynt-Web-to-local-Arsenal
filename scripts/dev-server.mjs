@@ -23,6 +23,7 @@ function start() {
     cwd: repoRoot,
     env: process.env,
     stdio: "inherit",
+    windowsHide: true,
   });
 
   child.on("exit", (code, signal) => {

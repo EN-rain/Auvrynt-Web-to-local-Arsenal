@@ -35,7 +35,7 @@ export async function inspectGodotGdscriptEnvironment(
   let godotVersion = "";
 
   try {
-    const { stdout } = await execFileAsync(godotExecutable, ["--version"]);
+    const { stdout } = await execFileAsync(godotExecutable, ["--version"], { windowsHide: true });
     godotVersion = stdout.trim();
   } catch {
     godotExecutable = "";
@@ -148,7 +148,7 @@ export async function getGdscriptDiagnostics(
 
   try {
     const godotExecutable = process.env.GODOT_EXECUTABLE || "godot";
-    const { stderr } = await execFileAsync(godotExecutable, ["--headless", "--path", projectRoot, "--validate-scripts"], { timeout: 3000 });
+    const { stderr } = await execFileAsync(godotExecutable, ["--headless", "--path", projectRoot, "--validate-scripts"], { timeout: 3000, windowsHide: true });
     for (const line of stderr.toString().split("\n")) {
       if (line.includes("ERROR:") || line.includes("SCRIPT ERROR:")) {
         errors.push({ message: line.trim(), path: input.scriptPath || "project", category: "parser" });
@@ -581,7 +581,7 @@ export async function formatGdscript(
   const workspace = registry.getWorkspace(input.workspaceId);
   const file = input.scriptPath ? registry.resolvePath(workspace, input.scriptPath) : workspace.root;
   try {
-    await execFileAsync("gdformat", input.verifyOnly ? ["--check", file] : [file]);
+    await execFileAsync("gdformat", input.verifyOnly ? ["--check", file] : [file], { windowsHide: true });
     return { formatted: !input.verifyOnly, verified: true };
   } catch {
     return { formatted: false, verified: false };
@@ -611,7 +611,7 @@ export async function runGdscriptTests(
   if (input.testPath) args.push(`-gselect=${input.testPath}`);
   const start = performance.now();
   try {
-    const { stdout, stderr } = await execFileAsync(process.env.GODOT_EXECUTABLE || "godot", args, { timeout: 30000 });
+    const { stdout, stderr } = await execFileAsync(process.env.GODOT_EXECUTABLE || "godot", args, { timeout: 30000, windowsHide: true });
     const logs = stdout.toString() + stderr.toString();
     return {
       passed: Number(logs.match(/(\d+) passed/)?.[1] ?? 0),

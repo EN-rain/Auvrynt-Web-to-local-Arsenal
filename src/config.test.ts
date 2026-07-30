@@ -23,9 +23,25 @@ assert.equal(loadConfig({ ...baseEnv, AUVRYNT_TOOL_MODE: "minimal" }).minimalToo
 assert.equal(loadConfig({ ...baseEnv, AUVRYNT_TOOL_MODE: "full" }).minimalTools, false);
 assert.equal(loadConfig({ ...baseEnv, AUVRYNT_MINIMAL_TOOLS: "0" }).minimalTools, false);
 assert.equal(loadConfig({ ...baseEnv, AUVRYNT_MINIMAL_TOOLS: "1" }).minimalTools, true);
+assert.equal(loadConfig(baseEnv).maxSessions, 99);
+assert.equal(loadConfig(baseEnv).maxSessionsPerClient, 99);
+assert.equal(loadConfig({ ...baseEnv, AUVRYNT_MAX_SESSIONS: "3" }).maxSessions, 3);
+assert.equal(loadConfig({ ...baseEnv, AUVRYNT_MAX_SESSIONS_PER_CLIENT: "2" }).maxSessionsPerClient, 2);
+assert.throws(
+  () => loadConfig({ ...baseEnv, AUVRYNT_MAX_SESSIONS: "100" }),
+  /Maximum is 99/,
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, AUVRYNT_MAX_SESSIONS_PER_CLIENT: "0" }),
+  /Invalid AUVRYNT_MAX_SESSIONS_PER_CLIENT/,
+);
 assert.equal(loadConfig(baseEnv).skillsEnabled, true);
 assert.equal(loadConfig({ ...baseEnv, AUVRYNT_SKILLS: "0" }).skillsEnabled, false);
 assert.equal(loadConfig({ ...baseEnv, AUVRYNT_SKILLS: "1" }).skillsEnabled, true);
+assert.equal(loadConfig(baseEnv).serena.enabled, false);
+assert.equal(loadConfig(baseEnv).integrations.serena, false);
+assert.equal(loadConfig({ ...baseEnv, AUVRYNT_SERENA_ENABLED: "0" }).serena.enabled, false);
+assert.equal(loadConfig({ ...baseEnv, AUVRYNT_SERENA_INTEGRATION_ENABLED: "0" }).integrations.serena, false);
 
 assert.throws(
   () => loadConfig({ ...baseEnv, AUVRYNT_WIDGETS: "invalid" }),

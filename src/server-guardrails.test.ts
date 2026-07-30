@@ -9,6 +9,7 @@ import { hardenHttpServer } from "./http-server-hardening.js";
 
 const stateDir = await mkdtemp(join(tmpdir(), "auvrynt-server-guardrails-"));
 const config = loadConfig({
+  AUVRYNT_CONFIG_DIR: stateDir,
   AUVRYNT_ALLOWED_ROOTS: process.cwd(),
   AUVRYNT_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
   AUVRYNT_GODOT_GDSCRIPT_ENABLED: "0",
@@ -67,6 +68,15 @@ try {
   assert.equal(toolIntegrationEnabled(running.config, "blender_get_scene_info"), true);
   assert.equal(toolIntegrationEnabled(running.config, "inspect_page"), true);
 
+  running.updateSessionLimit(3);
+  assert.equal(running.config.maxSessions, 3);
+  assert.equal(running.config.maxSessionsPerClient, 3);
+  running.updateSessionLimit(99);
+  const rootUpdate = running.updateWorkspaceRoots([stateDir]);
+  assert.equal(rootUpdate.updated, true);
+  assert.deepEqual(running.config.allowedRoots, [stateDir]);
+  running.updateWorkspaceRoots([process.cwd()]);
+
   const httpServer = running.app.listen(0, "127.0.0.1");
   hardenHttpServer(httpServer);
   try {
@@ -99,9 +109,32 @@ try {
     assert.match(localDashboard.headers.get("content-type") ?? "", /^text\/html/);
     assert.match(localDashboard.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/);
     assert.match(localDashboardHtml, /Auvrynt Dashboard/);
-    assert.match(localDashboardHtml, /Local control center/);
-    assert.match(localDashboardHtml, /Commands/);
-    assert.match(localDashboardHtml, /Recent logs/);
+    assert.match(localDashboardHtml, /aria-label="Auvrynt controls"/);
+    assert.match(localDashboardHtml, /Web agent presence/);
+    assert.match(localDashboardHtml, /Agent changes/);
+    assert.match(localDashboardHtml, /id="action-notice"/);
+    assert.doesNotMatch(localDashboardHtml, /Git is not required/);
+    assert.match(localDashboardHtml, /role="tab"[^>]+data-view="analytics"/);
+    assert.match(localDashboardHtml, /role="tab"[^>]+data-view="connectivity"/);
+    assert.match(localDashboardHtml, /role="tab"[^>]+data-view="logs"/);
+    assert.match(localDashboardHtml, /role="tab"[^>]+data-view="commands"/);
+    assert.match(localDashboardHtml, /id="activity-chart"/);
+    assert.match(localDashboardHtml, /id="change-additions"/);
+    assert.match(localDashboardHtml, /id="change-removals"/);
+    assert.match(localDashboardHtml, /id="files-created"/);
+    assert.match(localDashboardHtml, /id="files-deleted"/);
+    assert.match(localDashboardHtml, /data-copy-url="public"/);
+    assert.match(localDashboardHtml, /id="edit-workspace"/);
+    assert.doesNotMatch(localDashboardHtml, /id="workspace-editor"/);
+    assert.match(localDashboardHtml, /\/__auvrynt\/dashboard\/select-workspace/);
+    assert.doesNotMatch(localDashboardHtml, /id="command-form"/);
+    assert.doesNotMatch(localDashboardHtml, /id="command-output"/);
+    assert.doesNotMatch(localDashboardHtml, /\/__auvrynt\/dashboard\/command/);
+    assert.match(localDashboardHtml, /id="confirm-dialog"/);
+    assert.match(localDashboardHtml, /id="session-limit-form"/);
+    assert.match(localDashboardHtml, /\/__auvrynt\/dashboard\/session-limit/);
+    assert.match(localDashboardHtml, /Command reference/);
+    assert.match(localDashboardHtml, /Recent events/);
     assert.match(localDashboardHtml, /auvrynt start godotcs/);
     assert.match(localDashboardHtml, /auvrynt restart hard/);
     assert.match(localDashboardHtml, /AUVRYNT_PUBLIC_BASE_URL/);
@@ -109,12 +142,20 @@ try {
     assert.match(localDashboardHtml, /id="restart"/);
     assert.match(localDashboardHtml, /id="stop"/);
     assert.match(localDashboardHtml, /firstVisibleAnchor/);
+    assert.match(localDashboardHtml, /class="log-filter-row"/);
     assert.match(localDashboardHtml, /data-log-filter="tool"/);
+    assert.doesNotMatch(localDashboardHtml, /id="pause-logs"/);
+    assert.doesNotMatch(localDashboardHtml, /id="clear-logs"/);
+    assert.doesNotMatch(localDashboardHtml, /The indicator changes only after an authenticated MCP session connects/);
     assert.doesNotMatch(localDashboardHtml, /owner-token-that-is-long-enough/);
 
     const localDashboardData = await fetch(`http://127.0.0.1:${port}/dashboard/data`);
     const localDashboardBody = await localDashboardData.json() as Record<string, unknown>;
     assert.equal(localDashboardData.status, 200);
+    assert.equal(localDashboardBody.maxSessions, 99);
+    assert.equal(localDashboardBody.agentState, "waiting");
+    assert.equal(localDashboardBody.activeToolCalls, 0);
+    assert.ok(localDashboardBody.workspaceChanges && typeof localDashboardBody.workspaceChanges === "object");
     assert.ok(Array.isArray(localDashboardBody.integrations));
     assert.ok(Array.isArray(localDashboardBody.logs));
 

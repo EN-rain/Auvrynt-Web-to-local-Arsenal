@@ -13,10 +13,10 @@ export const AUVRYNT_THEME_CSS = `
   --auvrynt-accent-soft: #e9d5ff;
   --auvrynt-border: rgba(216, 180, 254, 0.35);
   --auvrynt-border-soft: rgba(216, 180, 254, 0.18);
-  --auvrynt-success: #86efac;
+  --auvrynt-success: #c4b5fd;
   --auvrynt-warning: #fde68a;
-  --auvrynt-danger: #ffb4b4;
-  --auvrynt-radius: 8px;
+  --auvrynt-danger: #f0abfc;
+  --auvrynt-radius: 12px;
   --auvrynt-font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --auvrynt-font-mono: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 }

@@ -17,11 +17,7 @@ import {
 } from "@modelcontextprotocol/sdk/shared/auth-utils.js";
 import express from "express";
 import type { Request, Response } from "express";
-import {
-  loadConfig,
-  oauthScopesForIntegrations,
-  type ServerConfig,
-} from "./config.js";
+import { loadConfig, type ServerConfig } from "./config.js";
 import {
   isLoopbackRequest,
   logEvent,
@@ -35,7 +31,10 @@ import { createArtifactRegistry } from "./artifact-registry.js";
 import { WorkspaceRegistry } from "./workspaces.js";
 import { ProcessManager } from "./processes.js";
 import { recordConnectedClient } from "./connection-registry.js";
-import { SessionRegistry } from "./session-registry.js";
+import {
+  SessionRegistry,
+  type SessionReservation,
+} from "./session-registry.js";
 import { RoomRegistry } from "./room-registry.js";
 import { createShutdownCoordinator } from "./shutdown.js";
 import { hardenHttpServer } from "./http-server-hardening.js";
@@ -57,10 +56,14 @@ export {
 import { attachSseHeartbeat } from "./sse-heartbeat.js";
 import { SerenaManager } from "./serena-manager.js";
 import { createMcpServer } from "./server/mcp-server-factory.js";
+import { applyIntegrationProfileUpdate } from "./server/integration-profile-update.js";
+import { openAiLogicalSessionId } from "./server/openai-session-hint.js"; import { createWorkspaceChangeTracker } from "./server/workspace-analytics.js";
 import {
   brandAssetDirectory,
   setAssetHeaders,
   uiBuildDirectory,
+  workspaceAppAssetInfo,
+  workspaceAppHtml,
 } from "./server/ui-assets.js";
 import {
   createDashboardView,
@@ -82,27 +85,19 @@ eventLoopProbe.unref();
 export interface RunningServer {
   app: ReturnType<typeof createMcpExpressApp>;
   config: ServerConfig;
-  updateIntegrations(
-    integrations: ServerConfig["integrations"],
-    options?: { serenaExecutable?: string },
-  ): Promise<{
-    updated: boolean;
-    activeRequests: number;
-    activeToolCalls: number;
-    closedSessions: number;
-  }>;
+  updateIntegrations(integrations: ServerConfig["integrations"], options?: { serenaExecutable?: string }): Promise<{ updated: boolean; activeRequests: number; activeToolCalls: number; closedSessions: number }>;
+  updateSessionLimit(maxSessions: number): void;
+  updateWorkspaceRoots(roots: string[]): { updated: boolean; activeToolCalls: number; closedWorkspaces: number };
   close(): Promise<void>;
 }
 
 export function createServer(config = loadConfig()): RunningServer {
-  const allowedHosts = config.allowedHosts.includes("*")
-    ? undefined
-    : Array.from(new Set([config.host, ...config.allowedHosts]));
+  const allowedHosts = config.allowedHosts.includes("*") ? undefined : Array.from(new Set([config.host, ...config.allowedHosts]));
   const app = createMcpExpressApp({
     host: config.host,
     ...(allowedHosts ? { allowedHosts } : {}),
   });
-  const sessionRegistry = new SessionRegistry(config);
+  const sessionRegistry = new SessionRegistry(config, { maxSessions: config.maxSessions, maxSessionsPerOwner: config.maxSessionsPerClient });
   const mcpUrl = new URL("/mcp", config.publicBaseUrl);
   const resourceServerUrl = resourceUrlFromServerUrl(mcpUrl);
   const oauthProvider = new SingleUserOAuthProvider(
@@ -122,7 +117,7 @@ export function createServer(config = loadConfig()): RunningServer {
   if (workspaceDb) createArtifactRegistry(workspaceDb.db);
   const workspaces = new WorkspaceRegistry(config, workspaceStore);
   const processManager = new ProcessManager(workspaces);
-  const reviewCheckpoints = createReviewCheckpointManager();
+  const reviewCheckpoints = createReviewCheckpointManager(), workspaceChanges = createWorkspaceChangeTracker();
   const serenaManager = new SerenaManager({
     enabled: config.serena.enabled,
     executable: config.serena.executable,
@@ -135,6 +130,7 @@ export function createServer(config = loadConfig()): RunningServer {
   });
   let activeMcpRequests = 0;
   let activeToolCalls = 0;
+  let lastMcpActivityAt: number | undefined;
   let acceptingRequests = true;
 
   app.set("trust proxy", "loopback");
@@ -184,9 +180,9 @@ export function createServer(config = loadConfig()): RunningServer {
   registerStaticAssets(app);
 
   const dashboardSnapshot = () => ({
-    ready: acceptingRequests,
-    sessions: sessionRegistry.activeCount(),
-    runningProcesses: processManager.runningCount(),
+    ready: acceptingRequests, sessions: sessionRegistry.connectedCount(), activeToolCalls,
+    lastMcpActivityAt, runningProcesses: processManager.runningCount(),
+    workspaceChanges: workspaceChanges.snapshot(),
   });
 
   app.get("/dashboard", async (req, res) => {
@@ -202,6 +198,37 @@ export function createServer(config = loadConfig()): RunningServer {
     res.setHeader("Content-Security-Policy", dashboardCsp(nonce));
     const view = await createDashboardView(config, dashboardSnapshot());
     res.type("html").send(dashboardHtml(view, nonce));
+  });
+
+  app.get("/tool-card-preview", (req, res) => {
+    if (!isLoopbackRequest(req)) {
+      res.status(404).end();
+      return;
+    }
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    const previewUrl = new URL(req.originalUrl, `http://${req.headers.host ?? "127.0.0.1"}`);
+    previewUrl.searchParams.set("preview", "1");
+    const localAssetBaseUrl = `${previewUrl.origin}/mcp-app-assets`;
+    res.type("html").send(
+      workspaceAppHtml(config, localAssetBaseUrl).replace(
+        "</head>",
+        `<base href="${previewUrl.pathname}${previewUrl.search}" /></head>`,
+      ),
+    );
+  });
+
+  app.get("/tool-card-source", (req, res) => {
+    if (!isLoopbackRequest(req)) {
+      res.status(404).end();
+      return;
+    }
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      preview: "/tool-card-preview?preview=1&tool=read_file&path=KNOWN_ISSUES.md&lines=42",
+      html: workspaceAppHtml(config),
+      assets: workspaceAppAssetInfo(config),
+    });
   });
 
   app.get("/dashboard/data", async (req, res) => {
@@ -229,7 +256,7 @@ export function createServer(config = loadConfig()): RunningServer {
 
   app.get("/readyz", (req, res) => {
     const sessionCapacityReached = sessionRegistry.isAtCapacity();
-    const ready = acceptingRequests && !sessionCapacityReached;
+    const ready = acceptingRequests;
     res.setHeader("Cache-Control", "no-store");
     if (!isLoopbackRequest(req)) {
       res.status(ready ? 200 : 503).json({ ready });
@@ -291,6 +318,7 @@ export function createServer(config = loadConfig()): RunningServer {
       return;
     }
 
+    lastMcpActivityAt = Date.now();
     const authScopes = req.auth.scopes ?? [];
     const toolCalls = Array.isArray(req.body) ? req.body : [req.body];
     for (const message of toolCalls) {
@@ -360,6 +388,7 @@ export function createServer(config = loadConfig()): RunningServer {
       if (!message || typeof message !== "object") return false;
       return (message as { method?: unknown }).method === "tools/call";
     });
+    const logicalSessionId = openAiLogicalSessionId(toolCalls);
     if (containsToolCall) activeToolCalls++;
 
     try {
@@ -382,6 +411,12 @@ export function createServer(config = loadConfig()): RunningServer {
       isInitialize: initializeRequest,
     });
 
+    let reservation: SessionReservation | undefined;
+    let initializingServer: McpServer | undefined;
+    let requestSessionId: string | undefined;
+    let requestBegan = false;
+    let initializationCommitted = false;
+
     try {
       let transport: Transport | undefined;
       if (sessionId) {
@@ -398,63 +433,96 @@ export function createServer(config = loadConfig()): RunningServer {
           sendJsonRpcError(res, 503, -32000, "MCP session is closing");
           return;
         }
-        sessionRegistry.touch(sessionId);
+        if (req.method === "DELETE" && !sessionRegistry.canTerminate(sessionId)) {
+          sendJsonRpcError(
+            res,
+            409,
+            -32000,
+            "MCP session has active tool calls; retry termination after they finish",
+          );
+          return;
+        }
+        if (!sessionRegistry.beginRequest(sessionId, containsToolCall)) {
+          sendJsonRpcError(res, 503, -32000, "MCP session is unavailable");
+          return;
+        }
+        if (logicalSessionId) {
+          sessionRegistry.bindLogicalSession(sessionId, logicalSessionId);
+        }
+        requestSessionId = sessionId;
+        requestBegan = true;
         transport = record.transport;
       } else if (initializeRequest) {
-        if (!sessionRegistry.canCreate(req.auth.clientId)) {
+        reservation = sessionRegistry.reserve(req.auth.clientId);
+        if (!reservation) {
           logEvent(config.logging, "warn", "mcp_session_capacity_reached", {
             requestId,
             clientId: req.auth.clientId,
             sessions: sessionRegistry.activeCount(),
+            occupiedSessions: sessionRegistry.occupiedCount(),
+            maxSessions: config.maxSessions,
           });
           sendJsonRpcError(
             res,
             503,
             -32000,
-            "MCP session capacity reached; close an older active connection and retry",
+            `MCP session capacity reached; maximum ${config.maxSessions} concurrent sessions`,
           );
           return;
         }
 
-        let mcpServer: McpServer | undefined;
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           eventStore: new BoundedMcpEventStore(),
           retryInterval: 1_500,
-          onsessioninitialized: (newSessionId) => {
+          onsessioninitialized: async (newSessionId) => {
             try {
               sessionRegistry.create(
+                reservation!,
                 transport!,
-                mcpServer!,
-                req.auth!.clientId,
+                initializingServer!,
               );
+              reservation = undefined;
               sessionRegistry.transition(newSessionId, "active");
+              if (logicalSessionId) {
+                sessionRegistry.bindLogicalSession(newSessionId, logicalSessionId);
+              }
+              if (!sessionRegistry.beginRequest(newSessionId, false)) {
+                throw new Error("Initialized MCP session could not acquire its request lease");
+              }
+              initializationCommitted = true;
+              requestSessionId = newSessionId;
+              requestBegan = true;
               logEvent(config.logging, "info", "mcp_session_created", {
                 requestId,
                 sessionIdPrefix: sessionIdPrefix(newSessionId),
                 ...requestLogFields(req),
               });
             } catch (error) {
+              if (sessionRegistry.get(newSessionId)) {
+                await sessionRegistry.closeSession(newSessionId, "initialization_failed");
+              }
               logEvent(config.logging, "error", "mcp_session_init_failed", {
                 requestId,
                 error: error instanceof Error ? error.message : String(error),
                 sessionIdPrefix: sessionIdPrefix(newSessionId),
               });
+              throw error;
             }
+          },
+          onsessionclosed: (closedSessionId) => {
+            sessionRegistry.markClosing(closedSessionId, "client_delete");
           },
         });
         transport.onclose = () => {
           const closedSessionId = transport?.sessionId;
           if (closedSessionId) {
-            sessionRegistry.transition(closedSessionId, "disconnected");
-            logEvent(config.logging, "info", "mcp_session_closed", {
-              sessionIdPrefix: sessionIdPrefix(closedSessionId),
-            });
+            sessionRegistry.handleTransportClosed(closedSessionId, "transport_closed");
           }
         };
 
         try {
-          mcpServer = createMcpServer(
+          initializingServer = createMcpServer(
             config,
             workspaces,
             reviewCheckpoints,
@@ -462,6 +530,7 @@ export function createServer(config = loadConfig()): RunningServer {
             processManager,
             roomRegistry,
             sessionRegistry,
+            workspaceChanges,
           );
         } catch (error) {
           logEvent(config.logging, "error", "mcp_server_create_failed", {
@@ -472,7 +541,7 @@ export function createServer(config = loadConfig()): RunningServer {
           return;
         }
         try {
-          await mcpServer.connect(transport);
+          await initializingServer.connect(transport);
         } catch (error) {
           logEvent(config.logging, "error", "mcp_server_connect_failed", {
             requestId,
@@ -491,23 +560,20 @@ export function createServer(config = loadConfig()): RunningServer {
         return;
       }
 
-      const actualSessionId = sessionId ?? transport?.sessionId;
-      if (actualSessionId) {
-        sessionRegistry.beginRequest(actualSessionId);
-        try {
-          await runWithContext(
-            {
-              sessionId: actualSessionId,
-              ownerClientId: req.auth!.clientId,
-              authScopes,
-            },
-            () => transport!.handleRequest(req, res, req.body),
-          );
-        } finally {
-          sessionRegistry.endRequest(actualSessionId);
-        }
+      if (sessionId) {
+        await runWithContext(
+          {
+            sessionId,
+            ownerClientId: req.auth!.clientId,
+            authScopes,
+          },
+          () => transport!.handleRequest(req, res, req.body),
+        );
       } else {
         await transport!.handleRequest(req, res, req.body);
+        if (initializationCommitted && res.statusCode >= 400 && requestSessionId) {
+          await sessionRegistry.closeSession(requestSessionId, "initialization_failed");
+        }
       }
     } catch (error) {
       logEvent(config.logging, "error", "mcp_request_error", {
@@ -518,6 +584,13 @@ export function createServer(config = loadConfig()): RunningServer {
         sendJsonRpcError(res, 500, -32603, "Internal server error");
       }
     } finally {
+      if (requestBegan && requestSessionId) {
+        sessionRegistry.endRequest(requestSessionId, containsToolCall);
+      }
+      if (reservation) {
+        sessionRegistry.release(reservation);
+        await initializingServer?.close().catch(() => undefined);
+      }
       if (containsToolCall) activeToolCalls--;
     }
   });
@@ -558,6 +631,15 @@ export function createServer(config = loadConfig()): RunningServer {
   return {
     app,
     config,
+    updateSessionLimit(maxSessions) {
+      sessionRegistry.updateLimits(maxSessions);
+      config.maxSessions = maxSessions;
+      config.maxSessionsPerClient = maxSessions;
+    },
+    updateWorkspaceRoots(roots) {
+      if (activeToolCalls > 0) return { updated: false, activeToolCalls, closedWorkspaces: 0 };
+      return { updated: true, activeToolCalls: 0, closedWorkspaces: workspaces.replaceAllowedRoots(roots).length };
+    },
     async updateIntegrations(integrations, options) {
       if (activeToolCalls > 0) {
         return {
@@ -568,25 +650,13 @@ export function createServer(config = loadConfig()): RunningServer {
         };
       }
 
-      Object.assign(config.integrations, integrations);
-      const locallyApprovedScopes = oauthScopesForIntegrations(
-        config.integrations,
-      );
-      if (
-        config.oauth.scopes.includes("auvrynt:blender-python")
-        && config.integrations.blender
-      ) {
-        locallyApprovedScopes.push("auvrynt:blender-python");
-      }
-      oauthProvider.grantScopesToExistingTokens(locallyApprovedScopes);
-      if (options?.serenaExecutable) {
-        config.serena.executable = options.serenaExecutable;
-      }
-      config.serena.enabled = integrations.serena;
-      serenaManager.updateConfig({
-        ...serenaManager.getConfig(),
-        enabled: integrations.serena,
-        executable: options?.serenaExecutable ?? config.serena.executable,
+      await applyIntegrationProfileUpdate({
+        config,
+        integrations,
+        serenaExecutable: options?.serenaExecutable,
+        oauthProvider,
+        serenaManager,
+        mcpServers: sessionRegistry.allRecords().map((record) => record.mcpServer),
       });
       return {
         updated: true,

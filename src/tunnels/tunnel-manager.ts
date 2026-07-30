@@ -45,29 +45,36 @@ export async function startTunnel(
 export async function readManagedTunnel(options: ManagedTunnelOptions): Promise<ManagedTunnelRecord | undefined> {
   const tunnelPath = managedTunnelPath(options.stateDir);
   const record = await readJsonFile<ManagedTunnelRecord>(tunnelPath);
-  const recordProvider: TunnelProvider = record?.provider ?? "cloudflare";
-  if (record && Number.isInteger(record.pid) && record.pid > 0 && record.port === options.port
-    && recordProvider === options.provider
-    && tunnelUrlMatchesProvider(record.url, options.provider, options.ngrokUrl)) {
-    if (processIdentityMatches(record.pid, record)) return record;
+  if (!record || !Number.isInteger(record.pid) || record.pid < 1) return undefined;
 
-    if (!record.processPath || !record.processStartedAt) {
-      const identity = getProcessIdentity(record.pid);
-      if (identity && tunnelExecutableNamePattern(options.provider).test(identity.processPath)) {
-        const migrated = { ...record, ...identity, provider: options.provider };
-        await atomicWriteJson(tunnelPath, migrated);
-        return migrated;
-      }
+  const recordProvider: TunnelProvider = record.provider ?? "cloudflare";
+  const matchesConfiguration = record.port === options.port
+    && recordProvider === options.provider
+    && tunnelUrlMatchesProvider(record.url, options.provider, options.ngrokUrl);
+  if (!matchesConfiguration) return undefined;
+  if (processIdentityMatches(record.pid, record)) return record;
+
+  if (!record.processPath || !record.processStartedAt) {
+    const identity = getProcessIdentity(record.pid);
+    if (identity && tunnelExecutableNamePattern(options.provider).test(identity.processPath)) {
+      const migrated = { ...record, ...identity, provider: options.provider };
+      await atomicWriteJson(tunnelPath, migrated);
+      return migrated;
     }
   }
+
   await unlink(tunnelPath).catch(() => undefined);
   return undefined;
 }
 
 export async function ensureManagedTunnel(options: ManagedTunnelOptions): Promise<ManagedTunnelResult> {
   const existing = await readManagedTunnel(options);
-  if (existing) return { record: existing, created: false };
+  if (existing) {
+    cleanupOrphanedTunnelProcesses(options, existing.pid);
+    return { record: existing, created: false };
+  }
 
+  await stopManagedTunnel(options);
   const logFileName = options.provider === "ngrok" ? "ngrok.log" : "cloudflared.log";
   const tunnel = await startTunnel(options.provider, options.port, {
     detached: true,
@@ -93,24 +100,107 @@ export async function ensureManagedTunnel(options: ManagedTunnelOptions): Promis
 }
 
 export async function stopManagedTunnel(options: ManagedTunnelOptions): Promise<boolean> {
-  const tunnel = await readManagedTunnel(options);
-  if (!tunnel) return false;
-  if (!processIdentityMatches(tunnel.pid, tunnel)) {
-    await unlink(managedTunnelPath(options.stateDir)).catch(() => undefined);
-    return false;
+  const tunnelPath = managedTunnelPath(options.stateDir);
+  const tunnel = await readJsonFile<ManagedTunnelRecord>(tunnelPath);
+  let stopped = false;
+
+  if (tunnel && Number.isInteger(tunnel.pid) && tunnel.pid > 0) {
+    const provider: TunnelProvider = tunnel.provider ?? "cloudflare";
+    if (processIdentityMatches(tunnel.pid, tunnel)) {
+      stopTunnelProcess(tunnel.pid, provider);
+      stopped = true;
+    }
   }
+
+  await unlink(tunnelPath).catch(() => undefined);
+  return cleanupOrphanedTunnelProcesses(options) > 0 || stopped;
+}
+
+interface TunnelProcessCandidate {
+  pid: number;
+  commandLine: string;
+}
+
+export function tunnelCommandMatches(
+  provider: TunnelProvider,
+  port: number,
+  commandLine: string,
+): boolean {
+  const escapedPort = String(port).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (provider === "ngrok") {
+    return new RegExp(`ngrok(?:\\.exe)?["']?\\s+http\\s+${escapedPort}(?:\\s|$)`, "i").test(commandLine);
+  }
+  return /cloudflared(?:\.exe)?["']?\s+tunnel(?:\s|$)/i.test(commandLine)
+    && new RegExp(`--url(?:=|\\s+)https?://(?:127\\.0\\.0\\.1|localhost):${escapedPort}(?:\\s|$)`, "i").test(commandLine);
+}
+
+function cleanupOrphanedTunnelProcesses(
+  options: ManagedTunnelOptions,
+  keepPid?: number,
+): number {
+  let stopped = 0;
+  for (const candidate of listTunnelProcessCandidates(options.provider)) {
+    if (candidate.pid === keepPid || !tunnelCommandMatches(options.provider, options.port, candidate.commandLine)) {
+      continue;
+    }
+    const identity = getProcessIdentity(candidate.pid);
+    if (!identity || !tunnelExecutableNamePattern(options.provider).test(identity.processPath)) continue;
+    stopTunnelProcess(candidate.pid, options.provider);
+    stopped++;
+  }
+  return stopped;
+}
+
+function listTunnelProcessCandidates(provider: TunnelProvider): TunnelProcessCandidate[] {
   try {
     if (process.platform === "win32") {
-      execFileSync("taskkill.exe", ["/PID", String(tunnel.pid), "/F"], { stdio: "ignore", windowsHide: true });
+      const executable = provider === "ngrok" ? "ngrok.exe" : "cloudflared.exe";
+      const script = [
+        `$items = @(Get-CimInstance Win32_Process -Filter \"Name = '${executable}'\" -ErrorAction Stop`,
+        "| ForEach-Object { [pscustomobject]@{ pid = $_.ProcessId; commandLine = [string]$_.CommandLine } })",
+        "$items | ConvertTo-Json -Compress",
+      ].join(" ; ").replace(/ ; \|/g, " |");
+      const raw = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
+      }).trim();
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as unknown;
+      const values = Array.isArray(parsed) ? parsed : [parsed];
+      return values.flatMap((value) => {
+        if (!value || typeof value !== "object") return [];
+        const item = value as Record<string, unknown>;
+        return Number.isInteger(item.pid) && typeof item.commandLine === "string"
+          ? [{ pid: item.pid as number, commandLine: item.commandLine }]
+          : [];
+      });
+    }
+
+    const raw = execFileSync("ps", ["-eo", "pid=,args="], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+    });
+    return raw.split(/\r?\n/).flatMap((line) => {
+      const match = line.trim().match(/^(\d+)\s+(.+)$/);
+      return match ? [{ pid: Number(match[1]), commandLine: match[2] }] : [];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function stopTunnelProcess(pid: number, provider: TunnelProvider): void {
+  try {
+    if (process.platform === "win32") {
+      execFileSync("taskkill.exe", ["/PID", String(pid), "/F"], { stdio: "ignore", windowsHide: true });
     } else {
-      process.kill(tunnel.pid, "SIGTERM");
+      process.kill(pid, "SIGTERM");
     }
   } catch {
-    if (isProcessRunning(tunnel.pid)) {
-      throw new Error(`Could not stop ${tunnelProviderLabel(options.provider)} tunnel process ${tunnel.pid}.`);
+    if (isProcessRunning(pid)) {
+      throw new Error(`Could not stop ${tunnelProviderLabel(provider)} tunnel process ${pid}.`);
     }
-  } finally {
-    await unlink(managedTunnelPath(options.stateDir)).catch(() => undefined);
   }
-  return true;
 }

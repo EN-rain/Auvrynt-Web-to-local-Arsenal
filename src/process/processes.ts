@@ -438,7 +438,7 @@ export class ProcessManager {
       const args = ["/T", "/PID", String(pid)];
       if (force) args.unshift("/F");
       try {
-        await execFileAsync("taskkill", args);
+        await execFileAsync("taskkill", args, { windowsHide: true });
       } catch (error) {
         if (!isPidRunning(pid)) return;
         const reason = error instanceof Error ? error.message : String(error);

@@ -172,7 +172,11 @@ export function checkSqliteNative(): string {
 
 function checkGitAvailable(): string {
   try {
-    return execFileSync("git", ["--version"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    return execFileSync("git", ["--version"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    }).trim();
   } catch (error) {
     return `Unavailable: ${error instanceof Error ? error.message : String(error)}`;
   }

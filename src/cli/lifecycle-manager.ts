@@ -28,7 +28,7 @@ import { integrationsForProfiles, postInstanceControl } from "./instance-control
 import { isAuvryntHealthReachable } from "./instance-lock.js";
 import { dashboardUrl, printConsolePanel, RUNNING_COMMAND_HINTS } from "./runtime-support.js";
 import { completeIntegrationsConfig, ensureIntegrationChoicesConfigured } from "./commands/integration-commands.js";
-import { loadAuvryntFiles } from "../user-config.js";
+import { loadAuvryntFiles, writeAuvryntConfig } from "../user-config.js";
 import {
   ensureManagedTunnel,
   managedTunnelPath,
@@ -107,10 +107,12 @@ export function createLifecycleManager(selfHealStartIntegrations: IntegrationBoo
   async function updateActiveProfiles(active: ActiveInstance, profiles: IntegrationKey[]): Promise<void> {
     const integrations = integrationsForProfiles(profiles);
     const config = loadConfig();
+    const currentProfiles = new Set(active.record.profiles ?? []);
+    const newlyEnabledProfiles = profiles.filter((profile) => !currentProfiles.has(profile));
     const healed = await selfHealStartIntegrations(
       active.record.launchRoot ?? resolve(process.cwd()),
       config.executables,
-      integrations,
+      integrationsForProfiles(newlyEnabledProfiles),
     );
     const response = await postInstanceControl(active, "/__auvrynt/control/profiles", {
       integrations,
@@ -247,6 +249,10 @@ export function createLifecycleManager(selfHealStartIntegrations: IntegrationBoo
     await mkdir(config.stateDir, { recursive: true, mode: 0o700 });
     await selfHealStartIntegrations(launchRoot, config.executables, integrationsForProfiles(profiles));
     const tunnelResult = await ensureManagedTunnel(managedTunnelOptions(config.stateDir, config.port, config.tunnelProvider, config));
+    if (config.publicBaseUrl !== tunnelResult.record.url) {
+      const files = loadAuvryntFiles();
+      writeAuvryntConfig({ ...files.config, publicBaseUrl: tunnelResult.record.url });
+    }
     const logPath = join(config.stateDir, "auvrynt.log");
     await rotateLogFile(logPath);
     const logHandle = openSync(logPath, "a", 0o600);
@@ -383,11 +389,29 @@ export function createLifecycleManager(selfHealStartIntegrations: IntegrationBoo
 
   async function restart(request: StartRequest, launchRoot: string, hard: boolean): Promise<void> {
     if (hard) {
-      const active = await readActiveInstance();
-      const profiles = request.profiles ?? active?.record.profiles;
-      if (!profiles) await ensureIntegrationChoicesConfigured();
-      await stop();
-      await start({ ...request, profiles, replace: true, backgroundChild: false }, launchRoot);
+      const config = loadConfig();
+      const management = await acquireManagementLock(config.stateDir);
+      try {
+        const active = await readActiveInstance();
+        const profiles = request.profiles ?? active?.record.profiles;
+        if (!profiles) await ensureIntegrationChoicesConfigured();
+        const restartRoot = resolve(active?.record.launchRoot ?? launchRoot);
+        process.env.AUVRYNT_ALLOWED_ROOTS = restartRoot;
+        process.env.AUVRYNT_WORKTREE_ROOT = restartRoot;
+        if (active) {
+          await adoptLegacyManagedTunnel(active);
+          await stopActiveInstance(active);
+        }
+        await stopManagedTunnel(
+          managedTunnelOptions(config.stateDir, config.port, config.tunnelProvider, config),
+        );
+        await runBackgroundStartUnlocked(
+          { ...request, profiles, replace: true, backgroundChild: false },
+          restartRoot,
+        );
+      } finally {
+        await management.release();
+      }
       return;
     }
     const config = loadConfig();

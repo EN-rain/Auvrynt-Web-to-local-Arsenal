@@ -54,7 +54,7 @@ export async function godotValidateProject(
 
   let rawLogs: string[] = [];
   try {
-    const { stdout, stderr } = await execFileAsync(godotExe, args, { cwd: targetDir });
+    const { stdout, stderr } = await execFileAsync(godotExe, args, { cwd: targetDir, windowsHide: true });
     rawLogs = (stdout + "\n" + stderr).split(/\r?\n/);
   } catch (err: any) {
     rawLogs = ((err.stdout ?? "") + "\n" + (err.stderr ?? err.message)).split(/\r?\n/);
@@ -98,7 +98,7 @@ export async function godotImportAssets(
 
   const start = Date.now();
   try {
-    const { stdout, stderr } = await execFileAsync(godotExe, args, { cwd: targetDir });
+    const { stdout, stderr } = await execFileAsync(godotExe, args, { cwd: targetDir, windowsHide: true });
     return {
       success: true,
       durationMs: Date.now() - start,

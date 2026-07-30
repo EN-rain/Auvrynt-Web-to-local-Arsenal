@@ -23,6 +23,15 @@ assert.deepEqual(parseStartRequest(["model", "--replace"]), {
 assert.throws(() => parseIntegrationProfiles(["unknown"]), /Unknown start profile/);
 assert.throws(() => parseStartRequest(["--unknown"]), /Unknown start option/);
 
+const lifecycleSource = await readFile(new URL("./cli/lifecycle-manager.ts", import.meta.url), "utf8");
+const hardRestartBlock = lifecycleSource.match(/if \(hard\) \{([\s\S]*?)\n    \}\n    const config = loadConfig\(\);/)?.[1] ?? "";
+assert.ok(hardRestartBlock, "hard-restart implementation must remain discoverable");
+assert.doesNotMatch(hardRestartBlock, /await stop\(\)/, "hard restart should use the locked lifecycle path directly");
+assert.match(hardRestartBlock, /await stopActiveInstance\(active\)/);
+assert.match(hardRestartBlock, /await stopManagedTunnel/,
+  "hard restart must destroy the managed tunnel so startup receives a fresh public URL");
+assert.match(hardRestartBlock, /await runBackgroundStartUnlocked/);
+
 const identity = getProcessIdentity(process.pid);
 assert.ok(identity);
 assert.equal(processIdentityMatches(process.pid, identity), true);

@@ -164,7 +164,7 @@ export async function godotBuildSolutions(
   const start = Date.now();
 
   try {
-    const { stdout, stderr } = await execFileAsync(godotExe, args, { cwd: targetDir });
+    const { stdout, stderr } = await execFileAsync(godotExe, args, { cwd: targetDir, windowsHide: true });
     const details = await inspectGodotDotnetProject(registry, { workspaceId: input.workspaceId, projectPath: input.projectPath });
     return {
       success: true,
@@ -193,7 +193,7 @@ export async function godotDotnetRestore(
   const start = Date.now();
 
   try {
-    const { stdout, stderr } = await execFileAsync("dotnet", args, { cwd: targetDir });
+    const { stdout, stderr } = await execFileAsync("dotnet", args, { cwd: targetDir, windowsHide: true });
     return {
       success: true,
       durationMs: Date.now() - start,

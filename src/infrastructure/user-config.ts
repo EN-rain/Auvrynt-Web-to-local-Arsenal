@@ -46,6 +46,8 @@ export interface AuvryntUserConfig {
   allowedRoots?: string[];
   publicBaseUrl?: string | null;
   allowedHosts?: string[];
+  maxSessions?: number;
+  maxSessionsPerClient?: number;
   stateDir?: string;
   worktreeRoot?: string;
   agentDir?: string;
@@ -104,6 +106,8 @@ const userConfigSchema: z.ZodType<AuvryntUserConfig> = z.object({
   allowedRoots: z.array(z.string()).optional(),
   publicBaseUrl: z.string().nullable().optional(),
   allowedHosts: z.array(z.string()).optional(),
+  maxSessions: z.number().int().min(1).max(99).optional(),
+  maxSessionsPerClient: z.number().int().min(1).max(99).optional(),
   stateDir: z.string().optional(),
   worktreeRoot: z.string().optional(),
   agentDir: z.string().optional(),

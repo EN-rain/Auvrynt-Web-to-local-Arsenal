@@ -117,7 +117,7 @@ const JET_BRAINS_TOOLS_PREFIX = "jet_brains_";
 
 export function defaultSerenaConfig(executable?: string): SerenaConfig {
   return {
-    enabled: false,
+    enabled: true,
     executable: executable ?? SERENA_DEFAULT_EXECUTABLE,
     backend: SERENA_DEFAULT_BACKEND,
     context: SERENA_DEFAULT_CONTEXT,
@@ -256,6 +256,9 @@ export class SerenaManager {
   private sessions = new Map<string, SerenaSession>();
   private environmentCache: SerenaEnvironment | null = null;
   private environmentCachedAt = 0;
+  private environmentInFlight: Promise<SerenaEnvironment> | null = null;
+  private environmentGeneration = 0;
+  private workspaceOperationTails = new Map<string, Promise<void>>();
   private idleTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(config: SerenaConfig) {
@@ -265,6 +268,8 @@ export class SerenaManager {
   updateConfig(config: SerenaConfig): void {
     this.config = config;
     this.environmentCache = null;
+    this.environmentInFlight = null;
+    this.environmentGeneration += 1;
   }
 
   getConfig(): SerenaConfig {
@@ -276,16 +281,38 @@ export class SerenaManager {
     if (this.environmentCache && now - this.environmentCachedAt < 30_000) {
       return this.environmentCache;
     }
-    this.environmentCache = await detectSerenaEnvironment(this.config);
-    this.environmentCachedAt = now;
-    return this.environmentCache;
+
+    const generation = this.environmentGeneration;
+    const inFlight = this.environmentInFlight ??= detectSerenaEnvironment({ ...this.config });
+    try {
+      const environment = await inFlight;
+      if (generation === this.environmentGeneration && this.environmentInFlight === inFlight) {
+        this.environmentCache = environment;
+        this.environmentCachedAt = Date.now();
+      }
+      return environment;
+    } finally {
+      if (this.environmentInFlight === inFlight) this.environmentInFlight = null;
+    }
   }
 
   clearEnvironmentCache(): void {
     this.environmentCache = null;
+    this.environmentGeneration += 1;
   }
 
   async startSession(
+    workspaceId: string,
+    projectRoot: string,
+    projectRelativePath?: string,
+  ): Promise<SerenaSession> {
+    return this.runWorkspaceOperation(
+      workspaceId,
+      () => this.startSessionUnlocked(workspaceId, projectRoot, projectRelativePath),
+    );
+  }
+
+  private async startSessionUnlocked(
     workspaceId: string,
     projectRoot: string,
     projectRelativePath?: string,
@@ -563,6 +590,25 @@ export class SerenaManager {
       lastUsedAt: s.lastUsedAt,
       lastError: s.lastError,
     }));
+  }
+
+  private async runWorkspaceOperation<T>(workspaceId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.workspaceOperationTails.get(workspaceId) ?? Promise.resolve();
+    const waitForPrevious = previous.catch(() => undefined);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const tail = waitForPrevious.then(() => gate);
+    this.workspaceOperationTails.set(workspaceId, tail);
+
+    await waitForPrevious;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.workspaceOperationTails.get(workspaceId) === tail) {
+        this.workspaceOperationTails.delete(workspaceId);
+      }
+    }
   }
 
   private async cleanupSession(session: SerenaSession): Promise<void> {

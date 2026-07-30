@@ -38,7 +38,7 @@ function makeConfig(overrides: Partial<SerenaConfig> = {}): SerenaConfig {
 // --- defaultSerenaConfig ---
 {
   const config = defaultSerenaConfig();
-  assert.equal(config.enabled, false);
+  assert.equal(config.enabled, true);
   assert.equal(config.executable, "serena");
   assert.equal(config.backend, "LSP");
   assert.equal(config.context, "desktop-app");
@@ -153,6 +153,25 @@ try {
   const mgr = new SerenaManager(makeConfig({ enabled: false }));
   const session = mgr.getSessionByWorkspace("nonexistent");
   assert.equal(session, undefined);
+}
+
+// --- SerenaManager serializes same-workspace lifecycle operations ---
+{
+  const mgr = new SerenaManager(makeConfig({ enabled: false }));
+  let active = 0;
+  let maxActive = 0;
+  const completed: number[] = [];
+  await Promise.all(Array.from({ length: 6 }, (_, index) =>
+    (mgr as any).runWorkspaceOperation("ws_shared", async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      completed.push(index);
+      active -= 1;
+    }),
+  ));
+  assert.equal(maxActive, 1);
+  assert.deepEqual(completed, [0, 1, 2, 3, 4, 5]);
 }
 
 // --- SerenaManager stopWorkspaceSessions (no-op when no sessions) ---

@@ -189,7 +189,7 @@ export async function dotnetRestore(
   const cwd = dirname(absolutePath);
   const start = Date.now();
   try {
-    const { stdout, stderr } = await execFileAsync("dotnet", ["restore", absolutePath], { cwd });
+    const { stdout, stderr } = await execFileAsync("dotnet", ["restore", absolutePath], { cwd, windowsHide: true });
     return { success: true, durationMs: Date.now() - start, output: (stdout + "\n" + stderr).slice(0, 1000) };
   } catch (err: any) {
     return {
@@ -218,7 +218,7 @@ export async function dotnetBuild(
 
   const start = Date.now();
   try {
-    const { stdout, stderr } = await execFileAsync("dotnet", args, { cwd });
+    const { stdout, stderr } = await execFileAsync("dotnet", args, { cwd, windowsHide: true });
     const parsed = parseDotnetBuildOutput(stdout + "\n" + stderr);
     return { success: parsed.success, durationMs: Date.now() - start, errors: parsed.errors, warnings: parsed.warnings };
   } catch (err: any) {
@@ -253,7 +253,7 @@ export async function dotnetTest(
 
   const start = Date.now();
   try {
-    const { stdout, stderr } = await execFileAsync("dotnet", args, { cwd });
+    const { stdout, stderr } = await execFileAsync("dotnet", args, { cwd, windowsHide: true });
     return { ...parseDotnetTestOutput(stdout + "\n" + stderr), durationMs: Date.now() - start };
   } catch (err: any) {
     return {
@@ -291,7 +291,7 @@ export async function dotnetFormat(
   if (input.verifyOnly) args.push("--verify-no-changes");
 
   try {
-    const { stdout, stderr } = await execFileAsync("dotnet", args, { cwd: dirname(absolutePath) });
+    const { stdout, stderr } = await execFileAsync("dotnet", args, { cwd: dirname(absolutePath), windowsHide: true });
     return { success: true, output: (stdout + "\n" + stderr).slice(0, 1000) };
   } catch (err: any) {
     return { success: false, output: (err.stdout ?? "") + "\n" + (err.stderr ?? err.message) };

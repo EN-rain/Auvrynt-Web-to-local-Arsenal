@@ -8,7 +8,11 @@ import { loadConfig } from "../config.js";
 import { RoomRegistry } from "../room-registry.js";
 import { runWithContext } from "../request-context.js";
 import { WorkspaceRegistry } from "../workspaces.js";
-import { configureMcpToolGuard, registerAppTool } from "./mcp-tool-registrar.js";
+import {
+  configureMcpToolGuard,
+  registerAppTool,
+  syncMcpToolAvailability,
+} from "./mcp-tool-registrar.js";
 
 const root = await mkdtemp(join(tmpdir(), "auvrynt-tool-guard-"));
 try {
@@ -55,6 +59,25 @@ try {
     /different OAuth client/,
   );
   assert.equal(calls, 1, "cross-owner request must be rejected before tool execution");
+
+  config.integrations.serena = true;
+  config.serena.enabled = true;
+  const serenaTool = registerAppTool(server, "serena_find_symbol", {
+    inputSchema: { workspaceId: z.string() },
+    _meta: {},
+  }, async () => ({ content: [{ type: "text", text: "semantic" }] }));
+  assert.ok(serenaTool);
+  assert.equal((serenaTool as any).enabled, true);
+
+  config.integrations.serena = false;
+  config.serena.enabled = false;
+  assert.deepEqual(syncMcpToolAvailability(server, config), { enabled: 0, disabled: 1 });
+  assert.equal((serenaTool as any).enabled, false, "disabled Serena must disappear from the MCP tool list");
+
+  config.integrations.serena = true;
+  config.serena.enabled = true;
+  assert.deepEqual(syncMcpToolAvailability(server, config), { enabled: 1, disabled: 0 });
+  assert.equal((serenaTool as any).enabled, true);
 } finally {
   await rm(root, { recursive: true, force: true });
 }

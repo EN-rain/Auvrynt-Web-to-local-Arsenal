@@ -54,12 +54,16 @@ export interface SerenaServerConfig {
   maxInstances: number;
 }
 
+export const MAX_MCP_SESSIONS = 99;
+
 export interface ServerConfig {
   host: string;
   port: number;
   oauth: OAuthConfig;
   allowedRoots: string[];
   allowedHosts: string[];
+  maxSessions: number;
+  maxSessionsPerClient: number;
   publicBaseUrl: string;
   minimalTools: boolean;
   toolNaming: ToolNamingMode;
@@ -212,6 +216,18 @@ function parsePositiveInteger(value: string | number | undefined, fallback: numb
   return parsed;
 }
 
+function parseMcpSessionLimit(
+  value: string | number | undefined,
+  fallback: number,
+  name: string,
+): number {
+  const parsed = parsePositiveInteger(value, fallback, name);
+  if (parsed > MAX_MCP_SESSIONS) {
+    throw new Error(`Invalid ${name}: ${value}. Maximum is ${MAX_MCP_SESSIONS}.`);
+  }
+  return parsed;
+}
+
 function parseToolNaming(value: string | undefined): ToolNamingMode {
   if (!value || value === "short") return "short";
   if (value === "legacy") return "legacy";
@@ -324,7 +340,7 @@ function parseSerenaConfig(env: NodeJS.ProcessEnv, filesConfig: AuvryntUserConfi
     throw new Error(`Invalid AUVRYNT_SERENA_BACKEND: ${backend}`);
   }
   return {
-    enabled: parseBoolean(env.AUVRYNT_SERENA_ENABLED ?? filesSerena.enabled, "AUVRYNT_SERENA_ENABLED"),
+    enabled: parseBoolean(env.AUVRYNT_SERENA_ENABLED ?? filesSerena.enabled ?? false, "AUVRYNT_SERENA_ENABLED"),
     executable: env.AUVRYNT_SERENA_EXECUTABLE ?? env.AUVRYNT_SERENA_PATH ?? filesConfig.executables?.serena ?? filesSerena.executable ?? "serena",
     backend,
     context: env.AUVRYNT_SERENA_CONTEXT ?? filesSerena.context ?? "desktop-app",
@@ -374,7 +390,7 @@ function parseIntegrationsConfig(env: NodeJS.ProcessEnv, filesConfig: AuvryntUse
     serena: parseOptionalIntegrationBoolean(
       env.AUVRYNT_SERENA_INTEGRATION_ENABLED ?? env.AUVRYNT_SERENA_ENABLED,
       "AUVRYNT_SERENA_INTEGRATION_ENABLED",
-    ) ?? configIntegrations.serena ?? true,
+    ) ?? configIntegrations.serena ?? filesConfig.serena?.enabled ?? false,
     playwright: parseOptionalIntegrationBoolean(env.AUVRYNT_PLAYWRIGHT_ENABLED, "AUVRYNT_PLAYWRIGHT_ENABLED") ?? configIntegrations.playwright ?? true,
   };
 }
@@ -402,6 +418,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     oauth: parseOAuthConfig(env, files.auth.ownerToken),
     allowedRoots: parseAllowedRoots(env.AUVRYNT_ALLOWED_ROOTS ?? files.config.allowedRoots),
     allowedHosts: parseAllowedHosts(env.AUVRYNT_ALLOWED_HOSTS, derivedAllowedHosts),
+    maxSessions: parseMcpSessionLimit(
+      env.AUVRYNT_MAX_SESSIONS ?? files.config.maxSessions,
+      MAX_MCP_SESSIONS,
+      "AUVRYNT_MAX_SESSIONS",
+    ),
+    maxSessionsPerClient: parseMcpSessionLimit(
+      env.AUVRYNT_MAX_SESSIONS_PER_CLIENT ?? files.config.maxSessionsPerClient ?? files.config.maxSessions,
+      MAX_MCP_SESSIONS,
+      "AUVRYNT_MAX_SESSIONS_PER_CLIENT",
+    ),
     publicBaseUrl,
     minimalTools: parseMinimalTools(env),
     toolNaming: parseToolNaming(env.AUVRYNT_TOOL_NAMING),

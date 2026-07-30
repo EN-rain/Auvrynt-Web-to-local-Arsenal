@@ -121,6 +121,17 @@ try {
   assert.equal(restoredWorktree.worktree?.managed, true);
   secondStore.close();
 
+  const limitedRegistry = new WorkspaceRegistry(config, undefined, { maxActiveWorkspaces: 3 });
+  const concurrentOpens = await Promise.allSettled(
+    Array.from({ length: 8 }, () => limitedRegistry.openWorkspace(root)),
+  );
+  const opened = concurrentOpens.filter(
+    (result): result is PromiseFulfilledResult<Awaited<ReturnType<WorkspaceRegistry["openWorkspace"]>>> => result.status === "fulfilled",
+  );
+  assert.equal(opened.length, 3, "concurrent workspace opens must not oversubscribe capacity");
+  assert.equal(concurrentOpens.filter((result) => result.status === "rejected").length, 5);
+  for (const result of opened) limitedRegistry.markClosed(result.value.workspace.id);
+
   if (platform() !== "win32") {
     const aliasRoot = join(root, "alias-root");
     await symlink(root, aliasRoot, "dir");
@@ -137,6 +148,15 @@ try {
     });
     assert.equal(aliasWorkspace.workspace.sourceRoot, join(aliasRoot, "git-project"));
   }
+
+  const replacementRoot = join(root, "replacement-root");
+  await mkdir(replacementRoot);
+  const closedWorkspaceIds = registry.replaceAllowedRoots([replacementRoot]);
+  assert.ok(closedWorkspaceIds.includes(workspace.id), "changing roots must invalidate the old active workspace");
+  assert.throws(() => registry.getWorkspace(workspace.id), /Unknown workspaceId|has been closed/);
+  const replacementWorkspace = await registry.openWorkspace(replacementRoot);
+  assert.equal(replacementWorkspace.workspace.root, replacementRoot);
+  assert.deepEqual(config.allowedRoots, [replacementRoot]);
 } finally {
   await rm(root, { recursive: true, force: true });
 }

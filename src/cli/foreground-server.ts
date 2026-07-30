@@ -9,6 +9,7 @@ import {
 } from "../integration-discovery.js";
 import { getGlobalGodotPluginStatus } from "../godot-tools.js";
 import { getPlaywrightRuntimeStatus } from "../playwright-runtime.js";
+import { loadAuvryntFiles } from "../user-config.js";
 import {
   INTEGRATION_KEYS,
   type IntegrationKey,
@@ -26,6 +27,7 @@ import {
 } from "./runtime-support.js";
 import { checkSqliteNative } from "./commands/status-commands.js";
 import { registerDashboardActions } from "./dashboard-actions.js";
+import { applyDetectedSerenaDefault } from "./serena-detected-default.js";
 
 export async function serveForegroundServer(): Promise<void> {
   const sqliteStatus = checkSqliteNative();
@@ -43,6 +45,10 @@ export async function serveForegroundServer(): Promise<void> {
 
   const { createServer } = await import("../server.js");
   const config = loadConfig();
+  const integrationStatus = await discoverLocalIntegrations().catch((): LocalIntegrationDiscovery => ({
+    processes: [], executables: {}, ports: {},
+  }));
+  applyDetectedSerenaDefault(config, integrationStatus, loadAuvryntFiles().config);
   const runningServer = createServer(config);
   const { app } = runningServer;
   const startMode = process.env.AUVRYNT_START_MODE === "true";
@@ -70,23 +76,6 @@ export async function serveForegroundServer(): Promise<void> {
   const godotIsSetup = Boolean(
     config.executables.godot || config.executables.godotCsharp,
   );
-
-  const integrationStatus: LocalIntegrationDiscovery = {
-    processes: [],
-    executables: {},
-    ports: {
-      blender_lab_mcp: false,
-      auvrynt_blender_bridge: false,
-      auvrynt_godot_bridge: false,
-    },
-  };
-  void discoverLocalIntegrations()
-    .then((discovered) => {
-      integrationStatus.processes = discovered.processes;
-      integrationStatus.executables = discovered.executables;
-      integrationStatus.ports = discovered.ports;
-    })
-    .catch(() => undefined);
 
   const controlToken = process.env.AUVRYNT_CONTROL_TOKEN;
   let requestShutdown: (() => Promise<void>) | undefined;
@@ -310,7 +299,7 @@ function printManagedStartBanner(
       `    The ${tunnelProviderLabel(config.tunnelProvider)} URL is temporary.`,
     );
     console.log(
-      "    Recreate or edit the web agent connector after a hard restart if the URL changes.",
+      "    Server restarts preserve this URL while the managed tunnel remains healthy.",
     );
   }
   console.log("");

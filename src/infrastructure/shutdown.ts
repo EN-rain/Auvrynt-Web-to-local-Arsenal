@@ -44,16 +44,7 @@ export function createShutdownCoordinator(
       };
 
       log("Closing MCP sessions...", "sessions_closed");
-      const closePromises: Promise<void>[] = [];
-      for (const record of sessionRegistry.allRecords()) {
-        if (record.state === "active" || record.state === "disconnected") {
-          record.state = "closing";
-          closePromises.push(
-            record.mcpServer.close().catch(() => {}),
-          );
-        }
-      }
-      await Promise.allSettled(closePromises);
+      await sessionRegistry.closeAll("server_shutdown");
       sessionRegistry.close();
 
       log("Terminating processes...", "processes_terminated");

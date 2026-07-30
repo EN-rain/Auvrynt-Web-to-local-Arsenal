@@ -14,8 +14,24 @@ interface WorkspaceAppManifestEntry {
 
 type WorkspaceAppManifest = Record<string, WorkspaceAppManifestEntry>;
 
-export function workspaceAppHtml(config: ServerConfig): string {
+export interface WorkspaceAppAssetInfo {
+  resourceBaseUrl: string;
+  scriptUrl: string;
+  stylesheetUrls: string[];
+}
+
+export function workspaceAppAssetInfo(config: ServerConfig): WorkspaceAppAssetInfo {
   const baseUrl = assetBaseUrl(config);
+  const entry = getWorkspaceAppManifestEntry();
+  return {
+    resourceBaseUrl: baseUrl,
+    scriptUrl: assetUrl(baseUrl, entry.file),
+    stylesheetUrls: (entry.css ?? []).map((stylesheet) => assetUrl(baseUrl, stylesheet)),
+  };
+}
+
+export function workspaceAppHtml(config: ServerConfig, baseUrlOverride?: string): string {
+  const baseUrl = baseUrlOverride?.replace(/\/+$/, "") ?? assetBaseUrl(config);
   const entry = getWorkspaceAppManifestEntry();
   const stylesheets = (entry.css ?? [])
     .map(
@@ -35,7 +51,13 @@ ${stylesheets}
   </head>
   <body>
     <main id="app" class="shell">
-      <section class="empty">Waiting for a tool result.</section>
+      <section class="empty loading" role="status" aria-live="polite">
+        <span class="empty-indicator" aria-hidden="true"></span>
+        <span class="empty-copy">
+          <span class="empty-title">Connecting to Auvrynt</span>
+          <span class="empty-detail">Establishing a secure link with the host.</span>
+        </span>
+      </section>
     </main>
   </body>
 </html>`;
