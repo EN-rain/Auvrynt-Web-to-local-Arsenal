@@ -1,7 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { realpath } from "node:fs/promises";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 import {
@@ -57,7 +55,14 @@ import { attachSseHeartbeat } from "./sse-heartbeat.js";
 import { SerenaManager } from "./serena-manager.js";
 import { createMcpServer } from "./server/mcp-server-factory.js";
 import { applyIntegrationProfileUpdate } from "./server/integration-profile-update.js";
-import { openAiLogicalSessionId } from "./server/openai-session-hint.js"; import { createWorkspaceChangeTracker } from "./server/workspace-analytics.js";
+import { openAiLogicalSessionId } from "./server/openai-session-hint.js";
+import { createWorkspaceChangeTracker } from "./server/workspace-analytics.js";
+import {
+  isMainModule,
+  mcpClientName,
+  requestLogFields,
+  sendJsonRpcError,
+} from "./server/http-helpers.js";
 import {
   brandAssetDirectory,
   setAssetHeaders,
@@ -725,45 +730,7 @@ function registerStaticAssets(
   );
 }
 
-function sendJsonRpcError(
-  res: Response,
-  status: number,
-  code: number,
-  message: string,
-): void {
-  res.status(status).json({
-    jsonrpc: "2.0",
-    error: { code, message },
-    id: null,
-  });
-}
-
-function requestLogFields(req: Request): Record<string, unknown> {
-  return {
-    userAgent: req.header("user-agent"),
-    contentLength: req.header("content-length"),
-  };
-}
-
-function mcpClientName(req: Request): string | undefined {
-  const headerName =
-    req.header("x-mcp-client-name") ?? req.header("x-client-name");
-  if (headerName) return headerName;
-  const body = req.body as
-    | { params?: { clientInfo?: { name?: unknown } } }
-    | undefined;
-  const name = body?.params?.clientInfo?.name;
-  return typeof name === "string" ? name : undefined;
-}
-
-async function isMainModule(): Promise<boolean> {
-  if (!process.argv[1]) return false;
-  const modulePath = await realpath(fileURLToPath(import.meta.url));
-  const entrypointPath = await realpath(process.argv[1]);
-  return modulePath === entrypointPath;
-}
-
-if (await isMainModule()) {
+if (await isMainModule(import.meta.url)) {
   const { app, config } = createServer();
   const httpServer = app.listen(config.port, config.host, () => {
     console.log(`auvrynt listening on http://${config.host}:${config.port}/mcp`);

@@ -84,7 +84,14 @@ export async function runStatusCommand(dependencies: StatusCommandDependencies):
   } else {
     rows.push({ label: "Process", value: "Not running" });
   }
-  rows.push({ label: "Public MCP", value: tunnel ? `${tunnel.url}/mcp` : "Not running" });
+  rows.push({
+    label: "Public MCP",
+    value: config.tunnelProvider === "custom"
+      ? new URL("/mcp", config.publicBaseUrl).toString()
+      : tunnel
+        ? `${tunnel.url}/mcp`
+        : "Not running",
+  });
 
   const local = await discoverLocalIntegrations({ pollMs: 1500 });
   const profileSet = new Set<IntegrationKey>(

@@ -26,6 +26,7 @@ export async function runTunnelCommand(dependencies: TunnelCommandDependencies):
       { value: "0", label: "0. Exit", hint: "make no changes" },
       { value: "1", label: "1. Cloudflare (CDN tunnel)", hint: current === "cloudflare" ? "current" : undefined },
       { value: "2", label: "2. ngrok", hint: current === "ngrok" ? "current" : undefined },
+      { value: "3", label: "3. Custom external URL", hint: current === "custom" ? "current" : "for Cloudflare Named Tunnel or another external proxy" },
     ],
   });
 
@@ -34,7 +35,8 @@ export async function runTunnelCommand(dependencies: TunnelCommandDependencies):
     return;
   }
 
-  const provider: TunnelProvider = picked === "2" ? "ngrok" : "cloudflare";
+  const provider: TunnelProvider = picked === "2" ? "ngrok" : picked === "3" ? "custom" : "cloudflare";
+  let publicBaseUrl = files.config.publicBaseUrl;
   let ngrokAuthtoken = files.config.ngrokAuthtoken;
   let ngrokUrl = files.config.ngrokUrl;
 
@@ -72,7 +74,30 @@ export async function runTunnelCommand(dependencies: TunnelCommandDependencies):
     ngrokUrl = normalizeNgrokUrl(String(answer));
   }
 
-  const nextConfig: AuvryntUserConfig = { ...files.config, tunnelProvider: provider };
+  if (provider === "custom") {
+    const answer = await prompts.text({
+      message: "External HTTPS base URL (without /mcp)",
+      placeholder: "https://mcp.example.com",
+      initialValue: publicBaseUrl ?? "",
+      validate: (value) => {
+        try {
+          const parsed = new URL(String(value).trim());
+          if (parsed.protocol !== "https:") return "Custom public URL must use HTTPS.";
+          if (parsed.pathname !== "/" || parsed.search || parsed.hash) return "Enter the origin only, without /mcp or another path.";
+          return undefined;
+        } catch {
+          return "Enter a valid HTTPS URL.";
+        }
+      },
+    });
+    if (prompts.isCancel(answer)) {
+      prompts.cancel("Tunnel setup cancelled.");
+      return;
+    }
+    publicBaseUrl = new URL(String(answer).trim()).origin;
+  }
+
+  const nextConfig: AuvryntUserConfig = { ...files.config, tunnelProvider: provider, publicBaseUrl };
   if (ngrokAuthtoken) nextConfig.ngrokAuthtoken = ngrokAuthtoken;
   else delete nextConfig.ngrokAuthtoken;
   if (ngrokUrl) nextConfig.ngrokUrl = ngrokUrl;

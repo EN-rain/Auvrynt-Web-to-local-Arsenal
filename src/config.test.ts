@@ -23,13 +23,13 @@ assert.equal(loadConfig({ ...baseEnv, AUVRYNT_TOOL_MODE: "minimal" }).minimalToo
 assert.equal(loadConfig({ ...baseEnv, AUVRYNT_TOOL_MODE: "full" }).minimalTools, false);
 assert.equal(loadConfig({ ...baseEnv, AUVRYNT_MINIMAL_TOOLS: "0" }).minimalTools, false);
 assert.equal(loadConfig({ ...baseEnv, AUVRYNT_MINIMAL_TOOLS: "1" }).minimalTools, true);
-assert.equal(loadConfig(baseEnv).maxSessions, 99);
-assert.equal(loadConfig(baseEnv).maxSessionsPerClient, 99);
+assert.equal(loadConfig(baseEnv).maxSessions, 999);
+assert.equal(loadConfig(baseEnv).maxSessionsPerClient, 999);
 assert.equal(loadConfig({ ...baseEnv, AUVRYNT_MAX_SESSIONS: "3" }).maxSessions, 3);
 assert.equal(loadConfig({ ...baseEnv, AUVRYNT_MAX_SESSIONS_PER_CLIENT: "2" }).maxSessionsPerClient, 2);
 assert.throws(
-  () => loadConfig({ ...baseEnv, AUVRYNT_MAX_SESSIONS: "100" }),
-  /Maximum is 99/,
+  () => loadConfig({ ...baseEnv, AUVRYNT_MAX_SESSIONS: "1000" }),
+  /Maximum is 999/,
 );
 assert.throws(
   () => loadConfig({ ...baseEnv, AUVRYNT_MAX_SESSIONS_PER_CLIENT: "0" }),

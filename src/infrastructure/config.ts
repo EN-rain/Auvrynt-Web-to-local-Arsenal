@@ -5,11 +5,12 @@ import { expandHomePath } from "../roots.js";
 import type { LoggingConfig, LogFormat, LogLevel } from "../logger.js";
 import type { OAuthConfig } from "../oauth-provider.js";
 import { loadAuvryntFiles, type AuvryntUserConfig, type AuvryntExecutablesConfig, type AuvryntIntegrationsConfig } from "../user-config.js";
+import { resolveNgrokAuthtoken } from "./ngrok-auth-pool.js";
 import { normalizeNgrokUrl } from "../tunnels/tunnel-utils.js";
 
 export type ToolNamingMode = "legacy" | "short";
 export type WidgetMode = "off" | "changes" | "full";
-export type TunnelProviderSetting = "cloudflare" | "ngrok";
+export type TunnelProviderSetting = "cloudflare" | "ngrok" | "custom";
 const DEFAULT_OAUTH_ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
 const DEFAULT_OAUTH_REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 
@@ -54,7 +55,7 @@ export interface SerenaServerConfig {
   maxInstances: number;
 }
 
-export const MAX_MCP_SESSIONS = 99;
+export const MAX_MCP_SESSIONS = 999;
 
 export interface ServerConfig {
   host: string;
@@ -256,9 +257,9 @@ function parseWidgetMode(value: string | undefined): WidgetMode {
 function parseTunnelProvider(value: string | undefined, fileValue: TunnelProviderSetting | undefined): TunnelProviderSetting {
   const effective = value ?? fileValue;
   if (!effective || effective === "cloudflare") return "cloudflare";
-  if (effective === "ngrok") return "ngrok";
+  if (effective === "ngrok" || effective === "custom") return effective;
 
-  throw new Error(`Invalid AUVRYNT_TUNNEL_PROVIDER: ${effective}. Use "cloudflare" or "ngrok".`);
+  throw new Error(`Invalid AUVRYNT_TUNNEL_PROVIDER: ${effective}. Use "cloudflare", "ngrok", or "custom".`);
 }
 
 function parseRequiredSecret(value: string | undefined, name: string): string {
@@ -442,7 +443,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     executables: parseExecutablesConfig(env, files.config),
     integrations,
     tunnelProvider: parseTunnelProvider(env.AUVRYNT_TUNNEL_PROVIDER, files.config.tunnelProvider),
-    ngrokAuthtoken: env.AUVRYNT_NGROK_AUTHTOKEN?.trim() || files.config.ngrokAuthtoken?.trim() || undefined,
+    ngrokAuthtoken: resolveNgrokAuthtoken(files, env),
     ngrokUrl: normalizeNgrokUrl(env.AUVRYNT_NGROK_URL ?? files.config.ngrokUrl),
   };
 }

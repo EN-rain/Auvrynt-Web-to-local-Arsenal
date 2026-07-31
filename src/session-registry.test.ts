@@ -17,7 +17,9 @@ const loggingConfig = {
   shellCommands: false,
 };
 const config = { logging: loggingConfig };
-assert.equal(HARD_MAX_SESSIONS, 99, "the MCP server must never allow more than 99 sessions");
+assert.equal(HARD_MAX_SESSIONS, 999, "the MCP server must never allow more than 999 sessions");
+assert.equal(DEFAULT_SESSION_IDLE_TIMEOUT_MS, 12 * 60 * 60 * 1000, "idle sessions should remain available for 12 hours");
+assert.equal(DEFAULT_DISCONNECT_GRACE_MS, 0, "idle cleanup should not add a grace period");
 
 function makeTransport(closeCounter?: { value: number }): any {
   return {
@@ -48,33 +50,61 @@ function createSession(
 
 {
   let now = 0;
+  const closed = { value: 0 };
+  const registry = new SessionRegistry(config, { now: () => now, startCleanupTimer: false });
+  const session = createSession(registry, "client1", closed);
+  registry.transition(session.sessionId, "active");
+
+  now = DEFAULT_SESSION_IDLE_TIMEOUT_MS - 1;
+  await registry.cleanupNow();
+  assert.equal(registry.get(session.sessionId)?.state, "active", "active session must survive until the 12-hour idle deadline");
+
+  now = DEFAULT_SESSION_IDLE_TIMEOUT_MS;
+  assert.equal(await registry.cleanupNow(), 1);
+  assert.equal(registry.get(session.sessionId), undefined, "idle session should close immediately at the deadline");
+  assert.equal(closed.value, 1, "idle session server must be closed");
+  registry.close();
+}
+
+{
+  let now = 0;
   const registry = new SessionRegistry(config, { now: () => now, startCleanupTimer: false });
   const session = createSession(registry, "client1");
   registry.transition(session.sessionId, "active");
+  assert.equal(registry.beginRequest(session.sessionId, true), true);
 
-  now = 12 * 60 * 60 * 1000;
+  now = DEFAULT_SESSION_IDLE_TIMEOUT_MS + DEFAULT_DISCONNECT_GRACE_MS + 1;
   await registry.cleanupNow();
-  assert.equal(registry.get(session.sessionId)?.state, "active", "active session must survive 12 hours");
+  assert.equal(
+    registry.get(session.sessionId)?.state,
+    "active",
+    "an in-flight QA tool call must not be disconnected or expired",
+  );
 
-  now = DEFAULT_SESSION_IDLE_TIMEOUT_MS;
+  registry.endRequest(session.sessionId, true);
   await registry.cleanupNow();
-  assert.equal(registry.get(session.sessionId)?.state, "disconnected");
+  assert.equal(registry.get(session.sessionId)?.state, "active", "request completion refreshes activity");
   registry.close();
 }
 
 {
   let now = 0;
   const closed = { value: 0 };
-  const registry = new SessionRegistry(config, { now: () => now, startCleanupTimer: false });
+  const disconnectGraceMs = 1_000;
+  const registry = new SessionRegistry(config, {
+    now: () => now,
+    disconnectGraceMs,
+    startCleanupTimer: false,
+  });
   const session = createSession(registry, "client1", closed);
   registry.transition(session.sessionId, "active");
   registry.transition(session.sessionId, "disconnected");
 
-  now = DEFAULT_DISCONNECT_GRACE_MS - 1;
+  now = disconnectGraceMs - 1;
   await registry.cleanupNow();
   assert.equal(registry.get(session.sessionId)?.state, "disconnected");
 
-  now = DEFAULT_DISCONNECT_GRACE_MS;
+  now = disconnectGraceMs;
   assert.equal(await registry.cleanupNow(), 1);
   assert.equal(registry.get(session.sessionId), undefined);
   assert.equal(closed.value, 1, "expired session server must be closed");
@@ -175,8 +205,8 @@ function createSession(
   const closed = { value: 0 };
   const registry = new SessionRegistry(config, {
     now: () => now,
-    maxSessions: 99,
-    maxSessionsPerOwner: 99,
+    maxSessions: HARD_MAX_SESSIONS,
+    maxSessionsPerOwner: HARD_MAX_SESSIONS,
     startCleanupTimer: false,
   });
   const sessions = Array.from({ length: 3 }, () => {
@@ -195,7 +225,7 @@ function createSession(
   assert.equal(
     registry.reserve("client1"),
     undefined,
-    "the 100th slot must be rejected at the hard maximum of 99",
+    "the 1000th slot must be rejected at the hard maximum of 999",
   );
   assert.equal(closed.value, 0);
   assert.ok(sessions.every((session) => registry.get(session.sessionId)?.state === "active"));

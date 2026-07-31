@@ -69,11 +69,11 @@ export function createMcpServer(
   const widgetMeta = {
     ui: {
       csp: widgetCsp,
-      prefersBorder: true,
+      prefersBorder: false,
     },
     "openai/widgetDescription":
       "Compact Auvrynt tool result card showing the action, target path, result count, and expandable output.",
-    "openai/widgetPrefersBorder": true,
+    "openai/widgetPrefersBorder": false,
     "openai/widgetCSP": {
       connect_domains: widgetCsp.connectDomains,
       resource_domains: widgetCsp.resourceDomains,

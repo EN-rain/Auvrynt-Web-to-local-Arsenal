@@ -16,7 +16,9 @@ export function findCommand(command: string): string | undefined {
 }
 
 export function tunnelProviderLabel(provider: TunnelProvider): string {
-  return provider === "ngrok" ? "ngrok" : "Cloudflare";
+  if (provider === "ngrok") return "ngrok";
+  if (provider === "custom") return "Custom external URL";
+  return "Cloudflare";
 }
 
 export function normalizeNgrokUrl(value: string | undefined): string | undefined {
@@ -53,11 +55,12 @@ export function tunnelUrlMatchesProvider(
     if (expected) return url === expected;
     return isGeneratedNgrokUrl(url);
   }
+  if (provider === "custom") return /^https:\/\//i.test(url);
   return /^https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com$/.test(url);
 }
 
 export function tunnelExecutableNamePattern(provider: TunnelProvider): RegExp {
-  return provider === "ngrok"
-    ? /(^|[\\/])ngrok(?:\.exe)?$/i
-    : /(^|[\\/])cloudflared(?:\.exe)?$/i;
+  if (provider === "ngrok") return /(^|[\\/])ngrok(?:\.exe)?$/i;
+  if (provider === "custom") return /$a/;
+  return /(^|[\\/])cloudflared(?:\.exe)?$/i;
 }

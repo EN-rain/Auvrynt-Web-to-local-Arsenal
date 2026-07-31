@@ -14,10 +14,7 @@ import {
   INTEGRATION_KEYS,
   type IntegrationKey,
 } from "../background-lifecycle.js";
-import {
-  tunnelProviderLabel,
-  tunnelUrlMatchesProvider,
-} from "../tunnels/tunnel-manager.js";
+import { tunnelProviderLabel } from "../tunnels/tunnel-manager.js";
 import {
   dashboardUrl,
   httpUrl,
@@ -28,6 +25,7 @@ import {
 import { checkSqliteNative } from "./commands/status-commands.js";
 import { registerDashboardActions } from "./dashboard-actions.js";
 import { applyDetectedSerenaDefault } from "./serena-detected-default.js";
+import { startTunnelHealthMonitor } from "./tunnel-health-monitor.js";
 
 export async function serveForegroundServer(): Promise<void> {
   const sqliteStatus = checkSqliteNative();
@@ -360,79 +358,6 @@ function integrationLine(
     return `  \x1b[90m${padded}\x1b[0m  \x1b[33moffline\x1b[0m`;
   }
   return `  \x1b[90m${padded}\x1b[0m  \x1b[90mnot configured\x1b[0m`;
-}
-
-function startTunnelHealthMonitor(config: ReturnType<typeof loadConfig>): void {
-  if (
-    !config.publicBaseUrl
-    || !tunnelUrlMatchesProvider(
-      config.publicBaseUrl,
-      config.tunnelProvider,
-      config.ngrokUrl,
-    )
-  ) {
-    return;
-  }
-
-  let consecutiveTunnelFailures = 0;
-  let recoveryWarningShown = false;
-  const failureThreshold = 2;
-  const providerLabel = tunnelProviderLabel(config.tunnelProvider);
-  const tunnelCheckInterval = setInterval(async () => {
-    try {
-      const response = await fetch(`${config.publicBaseUrl}/healthz`, {
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!response.ok) {
-        consecutiveTunnelFailures++;
-        logEvent(config.logging, "warn", "tunnel_health_failed", {
-          provider: providerLabel,
-          status: response.status,
-          consecutiveFailures: consecutiveTunnelFailures,
-          publicBaseUrl: config.publicBaseUrl,
-        });
-      } else {
-        consecutiveTunnelFailures = 0;
-        recoveryWarningShown = false;
-      }
-    } catch (error) {
-      try {
-        const localResponse = await fetch(
-          httpUrl(config.host, config.port, "/healthz"),
-          { signal: AbortSignal.timeout(2_000) },
-        );
-        if (localResponse.ok) {
-          consecutiveTunnelFailures++;
-          logEvent(config.logging, "warn", "tunnel_unreachable", {
-            provider: providerLabel,
-            consecutiveFailures: consecutiveTunnelFailures,
-            failureThreshold,
-            localServerHealthy: true,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          if (
-            consecutiveTunnelFailures >= failureThreshold
-            && !recoveryWarningShown
-          ) {
-            recoveryWarningShown = true;
-            logEvent(config.logging, "warn", "tunnel_recovery_required", {
-              provider: providerLabel,
-              reason: "Automatic replacement could change the public URL and invalidate the active OAuth issuer/resource configuration.",
-              recommendedAction: "Leave Auvrynt running for reconnection, or run `auvrynt restart hard` to create a new URL intentionally.",
-            });
-          }
-        }
-      } catch (localError) {
-        logEvent(config.logging, "error", "local_server_unreachable", {
-          tunnelError: error instanceof Error ? error.message : String(error),
-          localError: localError instanceof Error ? localError.message : String(localError),
-          recovery: "An external supervisor such as ecosystem.config.js is required for automatic process recovery.",
-        });
-      }
-    }
-  }, 60_000);
-  tunnelCheckInterval.unref();
-  (global as any).auvryntTunnelCheckInterval = tunnelCheckInterval;
 }
 
 function clearRuntimeIndicators(): void {

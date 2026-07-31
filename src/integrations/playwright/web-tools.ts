@@ -97,7 +97,7 @@ interface BrowserLike extends ClosableBrowserLike {
 
 interface PlaywrightLike {
   chromium: {
-    launch(options: { headless: boolean; args?: string[] }): Promise<BrowserLike>;
+    launch(options: { headless: boolean; args?: string[]; channel?: string }): Promise<BrowserLike>;
   };
 }
 
@@ -130,7 +130,17 @@ const BROWSER_CONTEXT_CLOSE_TIMEOUT_MS = 3_000;
 const BROWSER_CLOSE_TIMEOUT_MS = 8_000;
 const MAX_INLINE_SCREENSHOT_BYTES = 512 * 1024;
 const MAX_INLINE_RESPONSIVE_BYTES = 1024 * 1024;
-const LAUNCH_ARGS = ["--disable-gpu"];
+const LAUNCH_ARGS = [
+  "--disable-gpu",
+  "--disable-breakpad",
+  "--disable-crash-reporter",
+  "--noerrdialogs",
+];
+const LAUNCH_OPTIONS = {
+  headless: true,
+  args: LAUNCH_ARGS,
+  ...(process.platform === "win32" ? { channel: "chromium" } : {}),
+};
 let activeBrowserJobs = 0;
 
 async function closeContextWithTimeout(context: BrowserContextLike | undefined): Promise<void> {
@@ -393,7 +403,7 @@ export async function capturePageScreenshot(
     const width = Math.min(Math.max(input.viewportWidth ?? 1280, 320), 3840);
     const height = Math.min(Math.max(input.viewportHeight ?? 800, 240), 2160);
 
-    browser = await playwright.chromium.launch({ headless: true, args: LAUNCH_ARGS });
+    browser = await playwright.chromium.launch(LAUNCH_OPTIONS);
     context = await browser.newContext({ viewport: { width, height }, serviceWorkers: "block" });
     const blockedRequests: string[] = [];
     const safeUrl = await installRequestGuard(context, validatedUrl, blockedRequests);
@@ -469,7 +479,7 @@ export async function inspectPage(
   let context: BrowserContextLike | undefined;
   try {
     releaseSlot = acquireBrowserSlot();
-    browser = await playwright.chromium.launch({ headless: true, args: LAUNCH_ARGS });
+    browser = await playwright.chromium.launch(LAUNCH_OPTIONS);
     context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: "block" });
     const blockedRequests: string[] = [];
     const safeUrl = await installRequestGuard(context, validatedUrl, blockedRequests);
@@ -598,7 +608,7 @@ export async function testResponsivePage(
   let browser: BrowserLike | undefined;
   try {
     releaseSlot = acquireBrowserSlot();
-    browser = await playwright.chromium.launch({ headless: true, args: LAUNCH_ARGS });
+    browser = await playwright.chromium.launch(LAUNCH_OPTIONS);
     await mkdir(outputDirectory, { recursive: true });
     const content: ToolResponse["content"] = [];
     const results: Array<{ name: string; width: number; height: number; path: string; blockedRequests: string[] }> = [];

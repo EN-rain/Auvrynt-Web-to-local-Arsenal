@@ -52,7 +52,7 @@ export interface InstanceLockRecord extends ProcessIdentity {
   controlToken?: string;
 }
 
-export type TunnelProvider = "cloudflare" | "ngrok";
+export type TunnelProvider = "cloudflare" | "ngrok" | "custom";
 
 export interface ManagedTunnelRecord extends ProcessIdentity {
   pid: number;

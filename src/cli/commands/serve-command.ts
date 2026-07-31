@@ -57,7 +57,9 @@ export async function runServeCommand(
         );
       }
       const managedTunnelUrl = process.env.AUVRYNT_MANAGED_TUNNEL_URL;
-      if (managedTunnelUrl) {
+      if (localConfig.tunnelProvider === "custom") {
+        process.env.AUVRYNT_PUBLIC_BASE_URL = localConfig.publicBaseUrl;
+      } else if (managedTunnelUrl) {
         process.env.AUVRYNT_PUBLIC_BASE_URL = managedTunnelUrl;
       } else {
         tunnel = await startTunnel(localConfig.tunnelProvider, localConfig.port, {

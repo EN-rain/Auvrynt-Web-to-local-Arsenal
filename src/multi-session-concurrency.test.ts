@@ -16,8 +16,8 @@ const config = {
 
 const closedSessions = new Set<string>();
 const registry = new SessionRegistry(config, {
-  maxSessions: 99,
-  maxSessionsPerOwner: 99,
+  maxSessions: 5,
+  maxSessionsPerOwner: 5,
   startCleanupTimer: false,
 });
 

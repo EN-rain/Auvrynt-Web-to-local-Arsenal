@@ -19,9 +19,11 @@ const view: DashboardView = {
   uptimeSeconds: 7_543,
   localMcpUrl: "http://127.0.0.1:3000/mcp",
   publicMcpUrl: "https://auvrynt.example.test/mcp",
+  publicBaseUrl: "https://auvrynt.example.test",
+  tunnelProvider: "custom",
   allowedRoots: ["C:\\Users\\LENOVO\\Desktop\\Projectsss\\Moonless"],
   sessions: 1,
-  maxSessions: 99,
+  maxSessions: 999,
   runningProcesses: 2,
   workspaceChanges: {
     workspaceId: "ws_dashboard_test",
@@ -41,6 +43,21 @@ const view: DashboardView = {
     { key: "godotCsharp", label: "Godot C#", enabled: false, state: "disabled", detail: "Not included in the active profile." },
     { key: "godotGdscript", label: "Godot GDScript", enabled: false, state: "disabled", detail: "Not included in the active profile." },
   ],
+  ngrok: {
+    provider: "ngrok",
+    enabled: true,
+    environmentOverride: false,
+    activeIndex: 1,
+    tokens: [
+      { index: 0, fingerprint: "4A8F71C2B0", active: false, quotaExhaustedAt: new Date(now - 30_000).toISOString() },
+      { index: 1, fingerprint: "70C93D15AA", active: true },
+    ],
+    notice: {
+      tone: "warning",
+      title: "ngrok token switched automatically",
+      message: "1 saved token has reached the monthly request limit. Auvrynt is using backup 70C93D15AA.",
+    },
+  },
   logs: Array.from({ length: 24 }, (_, index) => ({
     id: 24 - index,
     ts: new Date(now - index * 50_000).toISOString(),
@@ -62,9 +79,11 @@ assert.ok(inlineScript, "dashboard inline script is missing");
 new Script(inlineScript, { filename: "dashboard-inline.js" });
 let restartRequests = 0;
 let stopRequests = 0;
+let stopCompleted = false;
 let workspaceRequests = 0;
 let workspacePickerRequests = 0;
 let sessionLimitRequests = 0;
+let ngrokTokenRequests = 0;
 let selectedWorkspacePath: string | undefined;
 
 const server = createServer(async (request, response) => {
@@ -80,8 +99,20 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (url.pathname === "/healthz") {
+    response.writeHead(stopCompleted ? 503 : 200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ ok: !stopCompleted, pid: 4242 }));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/__auvrynt/dashboard/ngrok-tokens") {
+    ngrokTokenRequests++;
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { action?: string };
+    if (body.action === "add") {
+      view.ngrok.tokens.push({ index: 2, fingerprint: "9F21D7A400", active: false });
+    }
     response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify({ ok: true, pid: 4242 }));
+    response.end(JSON.stringify({ message: "ngrok credentials updated.", ngrok: view.ngrok, restarting: false }));
     return;
   }
   if (request.method === "POST" && url.pathname === "/__auvrynt/dashboard/restart") {
@@ -92,6 +123,7 @@ const server = createServer(async (request, response) => {
   }
   if (request.method === "POST" && url.pathname === "/__auvrynt/dashboard/stop") {
     stopRequests++;
+    stopCompleted = true;
     response.writeHead(202, { "content-type": "application/json" });
     response.end(JSON.stringify({ message: "Auvrynt is stopping.", stopping: true }));
     return;
@@ -169,6 +201,8 @@ try {
     assert.equal(await page.locator("#edit-workspace svg").count(), 1);
     assert.equal(await page.getByText("Counts successful Auvrynt write/edit file operations").count(), 0);
     assert.equal(await page.locator(".server-state").evaluate((element: HTMLElement) => getComputedStyle(element).borderTopWidth), "0px");
+    assert.equal(await page.locator("#tunnel-alert").isVisible(), true, `${viewport.name}: ngrok quota alert should be visible`);
+    assert.match(await page.locator("#tunnel-alert-title").textContent() ?? "", /switched automatically/i);
 
     const dimensions = await page.evaluate(() => {
       const workspace = document.querySelector(".workspace")!.getBoundingClientRect();
@@ -194,13 +228,22 @@ try {
     assert.ok(Math.abs(dimensions.headerRight - dimensions.workspaceRight) <= 1, `${viewport.name}: header does not reach the workspace right edge`);
     assert.ok(dimensions.deltaGap >= 0, `${viewport.name}: additions and removals overlap`);
 
+    await page.locator("#open-secrets").click();
+    assert.equal(await page.locator("#page-title").textContent(), "Secrets");
+    assert.equal(await page.locator("#view-secrets").isVisible(), true);
+    assert.equal(await page.locator("#ngrok-token-input").getAttribute("type"), "password");
+    assert.equal(await page.locator(".token-row").count(), 2);
+    assert.equal(await page.locator("#ngrok-token-list").getByText("4A8F71C2B0", { exact: true }).count(), 1);
+    assert.equal(await page.locator("#ngrok-token-list").getByText("70C93D15AA", { exact: true }).count(), 1);
+    assert.equal((await page.locator("body").textContent() ?? "").includes("2abc_"), false, `${viewport.name}: raw token material must not be rendered`);
+
     await page.locator("#tab-connectivity").click();
     assert.equal(await page.locator("#page-title").textContent(), "Connectivity");
     assert.equal(await page.locator("#view-connectivity").isVisible(), true);
     assert.equal(await page.locator("#connection-title").isVisible(), true);
     assert.equal(await page.locator("#integrations-title").isVisible(), true);
     assert.equal(await page.locator("#workspace-editor").count(), 0);
-    assert.equal(await page.locator("#session-limit-input").inputValue(), "99");
+    assert.equal(await page.locator("#session-limit-input").inputValue(), "999");
     assert.equal(await page.locator("#session-limit-input").getAttribute("type"), "text");
     assert.equal(await page.locator("#session-limit-input").evaluate((element: HTMLElement) => getComputedStyle(element).borderTopWidth), "0px");
     assert.equal(await page.locator("#save-session-limit svg").count(), 1);
@@ -287,7 +330,12 @@ try {
     assert.equal(await page.locator("#stop").isDisabled(), true);
     assert.equal(await page.locator("#server-state-title").textContent(), "Stopping");
     assert.equal(stopRequests, 1);
+    await page.waitForFunction(() => document.querySelector("#lifecycle-overlay")?.classList.contains("complete"));
+    assert.equal(await page.locator("#lifecycle-title").textContent(), "Auvrynt stopped");
+    assert.equal(await page.locator("#server-state-title").textContent(), "Stopped");
+    assert.equal(await page.locator("#lifecycle-overlay").getAttribute("aria-hidden"), "false");
     await context.close();
+    stopCompleted = false;
   }
 
   {
@@ -303,6 +351,22 @@ try {
     assert.equal(await page.locator("#workspace").textContent(), "C:\\Projects\\NewRoot");
     assert.equal(await page.locator("#server-state-title").textContent(), "Server online");
     assert.equal(await page.locator("#edit-workspace").isDisabled(), false);
+    await context.close();
+  }
+
+  {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const page = await context.newPage();
+    await page.goto(dashboardUrl, { waitUntil: "networkidle" });
+    await page.locator("#tab-secrets").click();
+    await page.locator("#ngrok-token-input").fill("2abc_dashboard_backup_token_123456789");
+    await page.locator("#add-ngrok-token").click();
+    await page.waitForFunction(() => document.querySelector("#action-notice")?.textContent === "ngrok credentials updated.");
+    assert.equal(ngrokTokenRequests, 1);
+    assert.equal(await page.locator("#ngrok-token-input").inputValue(), "");
+    assert.equal(await page.locator(".token-row").count(), 3);
+    assert.equal(await page.getByText("9F21D7A400").count(), 1);
+    assert.equal((await page.locator("body").textContent() ?? "").includes("2abc_dashboard_backup_token"), false);
     await context.close();
   }
 

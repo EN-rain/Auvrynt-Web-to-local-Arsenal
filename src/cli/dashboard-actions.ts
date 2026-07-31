@@ -10,6 +10,11 @@ import {
   type IntegrationKey,
 } from "../background-lifecycle.js";
 import { MAX_MCP_SESSIONS, type ServerConfig } from "../config.js";
+import {
+  activateNgrokAuthtoken,
+  addNgrokAuthtoken,
+  removeNgrokAuthtoken,
+} from "../infrastructure/ngrok-auth-pool.js";
 import { isLoopbackRequest, logEvent } from "../logger.js";
 import type { RunningServer } from "../server.js";
 import { loadAuvryntFiles, writeAuvryntConfig } from "../user-config.js";
@@ -75,7 +80,7 @@ export function registerDashboardActions({
     res.status(429).json({ error: "Dashboard actions are being submitted too quickly." });
     return true;
   };
-  const queueDashboardRestart = (): { queued: true } | { queued: false; error: string } => {
+  const queueDashboardRestart = (hard = false): { queued: true } | { queued: false; error: string } => {
     if (dashboardRestartQueued) return { queued: false, error: "Restart is already queued." };
     if (!process.argv[1]) return { queued: false, error: "Restart entrypoint is unavailable." };
 
@@ -88,7 +93,8 @@ export function registerDashboardActions({
       // public MCP address survives while only the local server process cycles.
       delete environment.AUVRYNT_ALLOWED_ROOTS;
       delete environment.AUVRYNT_WORKTREE_ROOT;
-      const child = spawn(process.execPath, [process.argv[1]!, "restart"], {
+      if (hard) delete environment.AUVRYNT_MANAGED_TUNNEL_URL;
+      const child = spawn(process.execPath, [process.argv[1]!, "restart", ...(hard ? ["hard"] : [])], {
         cwd: process.cwd(),
         detached: true,
         stdio: "ignore",
@@ -155,6 +161,52 @@ export function registerDashboardActions({
     }
   });
 
+  app.post("/__auvrynt/dashboard/ngrok-tokens", async (req, res) => {
+    if (rejectUnauthorized(req, res) || rejectRateLimited(res)) return;
+    const body = req.body as { action?: unknown; token?: unknown; index?: unknown };
+    if (body.action !== "add" && body.action !== "remove" && body.action !== "activate") {
+      res.status(400).json({ error: "Invalid ngrok token action." });
+      return;
+    }
+
+    try {
+      const result = body.action === "add"
+        ? addNgrokAuthtoken(body.token)
+        : body.action === "remove"
+          ? removeNgrokAuthtoken(body.index)
+          : activateNgrokAuthtoken(body.index);
+      const shouldRestart = config.tunnelProvider === "ngrok"
+        && result.activeChanged
+        && !result.summary.environmentOverride;
+      const restart = shouldRestart ? queueDashboardRestart(true) : undefined;
+      if (shouldRestart && !restart?.queued) {
+        res.status(409).json({ error: restart?.error ?? "Auvrynt could not queue the tunnel restart." });
+        return;
+      }
+      const selected = result.summary.tokens.find((token) => token.active);
+      logEvent(config.logging, "info", "dashboard_ngrok_token_updated", {
+        action: body.action,
+        tokenCount: result.summary.tokens.length,
+        activeFingerprint: selected?.fingerprint,
+        restartQueued: Boolean(restart?.queued),
+      });
+      res.status(restart?.queued ? 202 : 200).json({
+        ngrok: result.summary,
+        restarting: Boolean(restart?.queued),
+        message: restart?.queued
+          ? "ngrok credentials updated. Restarting Auvrynt with the selected token; the public URL may change unless a stable ngrok URL is configured."
+          : "ngrok credentials updated.",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logEvent(config.logging, "warn", "dashboard_ngrok_token_update_failed", {
+        action: body.action,
+        error: message,
+      });
+      res.status(400).json({ error: message });
+    }
+  });
+
   app.post("/__auvrynt/dashboard/select-workspace", async (req, res) => {
     if (rejectUnauthorized(req, res)) return;
     if (workspacePickerActive) {
@@ -171,6 +223,50 @@ export function registerDashboardActions({
       res.status(500).json({ error: message });
     } finally {
       workspacePickerActive = false;
+    }
+  });
+
+  app.post("/__auvrynt/dashboard/public-url", (req, res) => {
+    if (rejectUnauthorized(req, res) || rejectRateLimited(res)) return;
+    if (process.env.AUVRYNT_PUBLIC_BASE_URL !== undefined || process.env.AUVRYNT_TUNNEL_PROVIDER !== undefined) {
+      res.status(409).json({
+        error: "The public URL or tunnel provider is controlled by an environment variable. Remove that override before editing it here.",
+      });
+      return;
+    }
+    const body = req.body as { publicBaseUrl?: unknown };
+    if (typeof body.publicBaseUrl !== "string") {
+      res.status(400).json({ error: "Enter a valid HTTPS public URL." });
+      return;
+    }
+    try {
+      const parsed = new URL(body.publicBaseUrl.trim());
+      if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port
+        || parsed.pathname !== "/" || parsed.search || parsed.hash) {
+        throw new Error("Enter an HTTPS origin without credentials, a custom port, /mcp, query, or fragment.");
+      }
+      const files = loadAuvryntFiles();
+      writeAuvryntConfig({
+        ...files.config,
+        tunnelProvider: "custom",
+        publicBaseUrl: parsed.origin,
+      });
+      const restart = queueDashboardRestart(true);
+      if (!restart.queued) {
+        res.status(409).json({ error: restart.error });
+        return;
+      }
+      logEvent(config.logging, "warn", "dashboard_public_url_updated", {
+        hostname: parsed.hostname,
+        restartQueued: true,
+      });
+      res.status(202).json({
+        message: "Switching to the custom external URL and restarting Auvrynt.",
+        restarting: true,
+        publicBaseUrl: parsed.origin,
+      });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
 

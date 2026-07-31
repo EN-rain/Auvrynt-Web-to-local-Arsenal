@@ -54,13 +54,16 @@ export interface AuvryntUserConfig {
   executables?: AuvryntExecutablesConfig;
   integrations?: AuvryntIntegrationsConfig;
   serena?: AuvryntSerenaUserConfig;
-  tunnelProvider?: "cloudflare" | "ngrok";
+  tunnelProvider?: "cloudflare" | "ngrok" | "custom";
   ngrokAuthtoken?: string;
   ngrokUrl?: string;
 }
 
 export interface AuvryntAuthConfig {
   ownerToken?: string;
+  ngrokAuthtokens?: string[];
+  ngrokActiveAuthtokenIndex?: number;
+  ngrokQuotaExhausted?: Record<string, string>;
 }
 
 export interface AuvryntFiles {
@@ -106,21 +109,24 @@ const userConfigSchema: z.ZodType<AuvryntUserConfig> = z.object({
   allowedRoots: z.array(z.string()).optional(),
   publicBaseUrl: z.string().nullable().optional(),
   allowedHosts: z.array(z.string()).optional(),
-  maxSessions: z.number().int().min(1).max(99).optional(),
-  maxSessionsPerClient: z.number().int().min(1).max(99).optional(),
+  maxSessions: z.number().int().min(1).max(999).optional(),
+  maxSessionsPerClient: z.number().int().min(1).max(999).optional(),
   stateDir: z.string().optional(),
   worktreeRoot: z.string().optional(),
   agentDir: z.string().optional(),
   executables: executablesSchema.optional(),
   integrations: integrationsSchema.optional(),
   serena: serenaSchema.optional(),
-  tunnelProvider: z.enum(["cloudflare", "ngrok"]).optional(),
+  tunnelProvider: z.enum(["cloudflare", "ngrok", "custom"]).optional(),
   ngrokAuthtoken: z.string().optional(),
   ngrokUrl: z.string().optional(),
 }).strict();
 
 const authConfigSchema: z.ZodType<AuvryntAuthConfig> = z.object({
   ownerToken: z.string().optional(),
+  ngrokAuthtokens: z.array(z.string().min(16).max(512)).max(20).optional(),
+  ngrokActiveAuthtokenIndex: z.number().int().min(0).optional(),
+  ngrokQuotaExhausted: z.record(z.string(), z.string()).optional(),
 }).strict();
 
 export function auvryntConfigDir(env: NodeJS.ProcessEnv = process.env): string {

@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import type { WorkspaceRegistry } from "../workspaces.js";
 
@@ -132,6 +134,108 @@ function isPidRunning(pid: number): boolean {
   }
 }
 
+interface DirectSpawnCommand {
+  executable: string;
+  args: string[];
+}
+
+function directWindowsCommand(command: string, useShell: boolean | undefined): DirectSpawnCommand | undefined {
+  if (process.platform !== "win32" || useShell === true) return undefined;
+  if (/%[A-Za-z_][A-Za-z0-9_]*%|![A-Za-z_][A-Za-z0-9_]*!/.test(command)) return undefined;
+  const tokens = splitSimpleCommandLine(command);
+  if (!tokens || tokens.length === 0) return undefined;
+  const executable = tokens[0];
+  const executableName = executable.replace(/^.*[\\/]/, "").toLowerCase();
+  if (executableName === "node" || executableName === "node.exe") {
+    return { executable: process.execPath, args: tokens.slice(1) };
+  }
+  if (executableName === "npm" || executableName === "npm.cmd") {
+    const cli = resolveNpmCli("npm-cli.js");
+    return cli ? { executable: process.execPath, args: [cli, ...tokens.slice(1)] } : undefined;
+  }
+  if (executableName === "npx" || executableName === "npx.cmd") {
+    const cli = resolveNpmCli("npx-cli.js");
+    return cli ? { executable: process.execPath, args: [cli, ...tokens.slice(1)] } : undefined;
+  }
+  const directExecutables = new Set([
+    "bash", "bash.exe", "git", "git.exe", "powershell", "powershell.exe",
+    "pwsh", "pwsh.exe", "python", "python.exe", "py", "py.exe",
+    "dotnet", "dotnet.exe", "java", "java.exe",
+  ]);
+  if (!directExecutables.has(executableName) && !executableName.endsWith(".exe")) return undefined;
+  return { executable, args: tokens.slice(1) };
+}
+
+function resolveNpmCli(fileName: "npm-cli.js" | "npx-cli.js"): string | undefined {
+  const candidates = [
+    join(dirname(process.execPath), "node_modules", "npm", "bin", fileName),
+    ...(process.env.APPDATA
+      ? [join(process.env.APPDATA, "npm", "node_modules", "npm", "bin", fileName)]
+      : []),
+  ];
+  return candidates.find((candidate) => existsSync(candidate));
+}
+
+function splitSimpleCommandLine(command: string): string[] | undefined {
+  const tokens: string[] = [];
+  const trimmed = command.trim();
+  let current = "";
+  let quote: "'" | '"' | undefined;
+  let tokenStarted = false;
+
+  const flush = () => {
+    if (!tokenStarted) return;
+    tokens.push(current);
+    current = "";
+    tokenStarted = false;
+  };
+
+  for (let index = 0; index < trimmed.length; index++) {
+    const character = trimmed[index];
+    if (quote === '"' && character === "\\") {
+      let slashCount = 1;
+      while (trimmed[index + slashCount] === "\\") slashCount++;
+      const following = trimmed[index + slashCount];
+      if (following === '"') {
+        current += "\\".repeat(Math.floor(slashCount / 2));
+        tokenStarted = true;
+        index += slashCount;
+        if (slashCount % 2 === 0) quote = undefined;
+        else current += '"';
+        continue;
+      }
+      current += "\\".repeat(slashCount);
+      tokenStarted = true;
+      index += slashCount - 1;
+      continue;
+    }
+    if (quote) {
+      if (character === quote) quote = undefined;
+      else current += character;
+      tokenStarted = true;
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      quote = character;
+      tokenStarted = true;
+      continue;
+    }
+    if (/\s/.test(character)) {
+      flush();
+      continue;
+    }
+    if (character === "&" || character === "|" || character === "<" || character === ">") {
+      return undefined;
+    }
+    current += character;
+    tokenStarted = true;
+  }
+
+  if (quote) return undefined;
+  flush();
+  return tokens;
+}
+
 export class ProcessManager {
   private readonly processes = new Map<string, TrackedProcess>();
 
@@ -168,14 +272,19 @@ export class ProcessManager {
     const processId = `proc_${randomUUID()}`;
     const childEnv = { ...process.env, ...(input.environment ?? {}) };
     const redactionEnvironment = input.environment;
-    const useShell = input.useShell ?? true;
-    const child = spawn(command, {
+    const directCommand = directWindowsCommand(command, input.useShell);
+    const useShell = input.useShell ?? !directCommand;
+    const spawnOptions: SpawnOptions = {
       cwd,
       env: childEnv,
       shell: useShell,
       windowsHide: process.platform === "win32",
       detached: process.platform !== "win32",
-    });
+      stdio: ["ignore", "pipe", "pipe"],
+    };
+    const child: ChildProcess = directCommand
+      ? spawn(directCommand.executable, directCommand.args, spawnOptions)
+      : spawn(command, spawnOptions);
 
     const tracked: TrackedProcess = {
       id: processId,

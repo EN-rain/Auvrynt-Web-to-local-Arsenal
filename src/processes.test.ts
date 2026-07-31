@@ -9,6 +9,23 @@ import { ProcessManager, redactProcessText, sanitizeEnv } from "./processes.js";
 const root1 = await mkdtemp(join(tmpdir(), "auvrynt-proc-test1-"));
 const root2 = await mkdtemp(join(tmpdir(), "auvrynt-proc-test2-"));
 
+async function waitForLog(
+  manager: ProcessManager,
+  workspaceId: string,
+  processId: string,
+  predicate: (line: string) => boolean,
+  timeoutMs = 10_000,
+): Promise<string[]> {
+  const deadline = Date.now() + timeoutMs;
+  let lines: string[] = [];
+  while (Date.now() < deadline) {
+    lines = manager.getProcessLogs({ workspaceId, processId }).lines;
+    if (lines.some(predicate)) return lines;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return lines;
+}
+
 try {
   const config = loadConfig({
     AUVRYNT_ALLOWED_ROOTS: `${root1},${root2}`,
@@ -94,12 +111,79 @@ try {
   });
   assert.equal(stopResult.stopped, true);
 
-  // 7. Invalid process ID check
+  // 7. Simple Node commands run without a Windows shell window.
+  const nodeResult = manager.startProcess({
+    workspaceId: ws1.id,
+    command: `node -e "console.log('Hidden Node Process')"`,
+  });
+  await new Promise((res) => setTimeout(res, 500));
+  const nodeLogs = manager.getProcessLogs({ workspaceId: ws1.id, processId: nodeResult.processId });
+  assert.ok(nodeLogs.lines.some((line) => line.includes("Hidden Node Process")));
+  await manager.stopProcess({ workspaceId: ws1.id, processId: nodeResult.processId });
+
+  if (process.platform === "win32") {
+    const uncResult = manager.startProcess({
+      workspaceId: ws1.id,
+      command: 'node -e "console.log(process.argv[1])" "\\\\server\\share"',
+    });
+    const uncLines = await waitForLog(
+      manager,
+      ws1.id,
+      uncResult.processId,
+      (line) => line.includes("\\\\server\\share"),
+    );
+    assert.ok(uncLines.some((line) => line.includes("\\\\server\\share")));
+    await manager.stopProcess({ workspaceId: ws1.id, processId: uncResult.processId });
+
+    const envResult = manager.startProcess({
+      workspaceId: ws1.id,
+      command: `node -e "console.log(process.argv[1])" "%TEMP%"`,
+    });
+    assert.ok(process.env.TEMP);
+    const envLines = await waitForLog(
+      manager,
+      ws1.id,
+      envResult.processId,
+      (line) => line.includes(process.env.TEMP!),
+    );
+    assert.ok(envLines.some((line) => line.includes(process.env.TEMP!)));
+    assert.ok(envLines.every((line) => !line.includes("%TEMP%")));
+    await manager.stopProcess({ workspaceId: ws1.id, processId: envResult.processId });
+
+    const powershellResult = manager.startProcess({
+      workspaceId: ws1.id,
+      command: `powershell -NoProfile -NonInteractive -Command "Write-Output HiddenPowerShell"`,
+    });
+    const powershellLines = await waitForLog(
+      manager,
+      ws1.id,
+      powershellResult.processId,
+      (line) => line.includes("HiddenPowerShell"),
+    );
+    assert.ok(powershellLines.some((line) => line.includes("HiddenPowerShell")));
+    await manager.stopProcess({ workspaceId: ws1.id, processId: powershellResult.processId });
+
+    const npmResult = manager.startProcess({
+      workspaceId: ws1.id,
+      command: "npm --version",
+    });
+    const npmLines = await waitForLog(
+      manager,
+      ws1.id,
+      npmResult.processId,
+      (line) => /\d+\.\d+\.\d+/.test(line),
+    );
+    assert.ok(npmLines.some((line) => /\d+\.\d+\.\d+/.test(line)));
+    await manager.stopProcess({ workspaceId: ws1.id, processId: npmResult.processId });
+  }
+
+  // 8. Invalid process ID check
   assert.throws(
     () => manager.getProcessLogs({ workspaceId: ws1.id, processId: "proc_invalid" }),
     /not found in workspace/i,
   );
+  await manager.stopAllProcesses();
 } finally {
-  await rm(root1, { recursive: true, force: true });
-  await rm(root2, { recursive: true, force: true });
+  await rm(root1, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  await rm(root2, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }

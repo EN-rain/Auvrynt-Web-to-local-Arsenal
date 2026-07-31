@@ -1,4 +1,8 @@
 import type { ServerConfig } from "../config.js";
+import {
+  summarizeNgrokAuthtokens,
+  type NgrokAuthtokenPoolSummary,
+} from "../infrastructure/ngrok-auth-pool.js";
 import { readConnectedClients } from "../connection-registry.js";
 import { discoverLocalIntegrations, processDetected } from "../integration-discovery.js";
 import type { RecentLogEntry } from "../infrastructure/logger.js";
@@ -11,6 +15,17 @@ export { dashboardHtml };
 
 export type DashboardIntegrationKey = keyof ServerConfig["integrations"];
 export type DashboardAgentState = "working" | "connected" | "waiting" | "stopping";
+
+export interface DashboardNgrokNotice {
+  tone: "warning" | "error";
+  title: string;
+  message: string;
+}
+
+export interface DashboardNgrokState extends NgrokAuthtokenPoolSummary {
+  provider: ServerConfig["tunnelProvider"];
+  notice?: DashboardNgrokNotice;
+}
 
 export interface DashboardIntegration {
   key: DashboardIntegrationKey;
@@ -30,12 +45,15 @@ export interface DashboardView {
   uptimeSeconds: number;
   localMcpUrl: string;
   publicMcpUrl: string;
+  publicBaseUrl: string;
+  tunnelProvider: ServerConfig["tunnelProvider"];
   allowedRoots: string[];
   sessions: number;
   maxSessions: number;
   runningProcesses: number;
   workspaceChanges: WorkspaceChangeAnalytics;
   integrations: DashboardIntegration[];
+  ngrok: DashboardNgrokState;
   logs: RecentLogEntry[];
 }
 
@@ -107,6 +125,9 @@ export async function createDashboardView(
   const agentProvider = runtime.sessions > 0
     ? readConnectedClients(config.stateDir)[0]?.provider
     : undefined;
+  const logs = recentLogEntries(250).reverse();
+  const ngrokSummary = summarizeNgrokAuthtokens();
+  const ngrokNotice = createNgrokNotice(config, ngrokSummary, logs);
   const agentState: DashboardAgentState = !runtime.ready
     ? "stopping"
     : runtime.activeToolCalls > 0
@@ -127,6 +148,8 @@ export async function createDashboardView(
     uptimeSeconds: process.uptime(),
     localMcpUrl: localHttpUrl(config.host, config.port, "/mcp"),
     publicMcpUrl: `${config.publicBaseUrl.replace(/\/$/, "")}/mcp`,
+    publicBaseUrl: config.publicBaseUrl,
+    tunnelProvider: config.tunnelProvider,
     allowedRoots: [...config.allowedRoots],
     sessions: runtime.sessions,
     maxSessions: config.maxSessions,
@@ -174,7 +197,51 @@ export async function createDashboardView(
         "Playwright Chromium is unavailable.",
       ),
     ],
-    logs: recentLogEntries(250).reverse(),
+    ngrok: {
+      ...ngrokSummary,
+      provider: config.tunnelProvider,
+      ...(ngrokNotice ? { notice: ngrokNotice } : {}),
+    },
+    logs,
+  };
+}
+
+function createNgrokNotice(
+  config: ServerConfig,
+  summary: NgrokAuthtokenPoolSummary,
+  logs: RecentLogEntry[],
+): DashboardNgrokNotice | undefined {
+  if (config.tunnelProvider !== "ngrok") return undefined;
+  const quotaEvent = logs.some((entry) => entry.event === "ngrok_quota_exhausted");
+  const exhausted = summary.tokens.filter((token) => token.quotaExhaustedAt);
+  if (summary.environmentOverride) {
+    if (!quotaEvent) return undefined;
+    return {
+      tone: "error",
+      title: "ngrok request limit reached",
+      message: "The active token comes from AUVRYNT_NGROK_AUTHTOKEN, so automatic failover is blocked. Remove that override and add backup tokens in Secrets.",
+    };
+  }
+  if (exhausted.length === 0) return undefined;
+  const active = summary.tokens.find((token) => token.active);
+  if (active && !active.quotaExhaustedAt && exhausted.length > 0) {
+    return {
+      tone: "warning",
+      title: "ngrok token switched automatically",
+      message: `${exhausted.length} saved token${exhausted.length === 1 ? " has" : "s have"} reached the monthly request limit. Auvrynt is using backup ${active.fingerprint}. Check Connectivity because a random ngrok public URL may have changed.`,
+    };
+  }
+  if (summary.tokens.length === 0) {
+    return {
+      tone: "error",
+      title: "ngrok request limit reached",
+      message: "No managed backup token is available. Add another ngrok authtoken in Secrets to restore the public MCP tunnel.",
+    };
+  }
+  return {
+    tone: "error",
+    title: "All saved ngrok tokens are unavailable",
+    message: `${exhausted.length || summary.tokens.length} saved token${summary.tokens.length === 1 ? " has" : "s have"} reached the monthly request limit. Add a fresh token in Secrets.`,
   };
 }
 

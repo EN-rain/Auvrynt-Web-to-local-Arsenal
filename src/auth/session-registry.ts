@@ -56,11 +56,11 @@ export interface SessionRegistryOptions {
   startCleanupTimer?: boolean;
 }
 
-export const DEFAULT_SESSION_IDLE_TIMEOUT_MS = 24 * 60 * 60 * 1000;
-export const DEFAULT_DISCONNECT_GRACE_MS = 12 * 60 * 60 * 1000;
+export const DEFAULT_SESSION_IDLE_TIMEOUT_MS = 12 * 60 * 60 * 1000;
+export const DEFAULT_DISCONNECT_GRACE_MS = 0;
 export const DEFAULT_SESSION_RESERVATION_TIMEOUT_MS = 60 * 1000;
 export const DEFAULT_SESSION_CLOSE_TIMEOUT_MS = 5 * 1000;
-export const DEFAULT_SESSION_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+export const DEFAULT_SESSION_CLEANUP_INTERVAL_MS = 60 * 1000;
 export const HARD_MAX_SESSIONS = MAX_MCP_SESSIONS;
 export const DEFAULT_MAX_SESSIONS = HARD_MAX_SESSIONS;
 export const DEFAULT_MAX_SESSIONS_PER_OWNER = HARD_MAX_SESSIONS;
@@ -90,9 +90,9 @@ export class SessionRegistry {
       options.sessionIdleTimeoutMs,
       positiveEnvMs("AUVRYNT_SESSION_IDLE_MS", DEFAULT_SESSION_IDLE_TIMEOUT_MS),
     );
-    this.disconnectGraceMs = positiveMs(
+    this.disconnectGraceMs = nonNegativeMs(
       options.disconnectGraceMs,
-      positiveEnvMs("AUVRYNT_DISCONNECT_GRACE_MS", DEFAULT_DISCONNECT_GRACE_MS),
+      nonNegativeEnvMs("AUVRYNT_DISCONNECT_GRACE_MS", DEFAULT_DISCONNECT_GRACE_MS),
     );
     this.reservationTimeoutMs = positiveMs(
       options.reservationTimeoutMs,
@@ -451,6 +451,11 @@ export class SessionRegistry {
         && record.inFlightRequests === 0
         && now - record.lastActivityAt >= this.sessionIdleTimeoutMs
       ) {
+        if (this.disconnectGraceMs === 0) {
+          closePromises.push(this.closeSession(record.sessionId, "idle_timeout"));
+          cleaned++;
+          continue;
+        }
         const oldState = record.state;
         record.state = "disconnected";
         record.disconnectedAt = now;
@@ -621,12 +626,21 @@ function positiveEnvMs(name: string, fallback: number): number {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+function nonNegativeEnvMs(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
 function positiveEnvInteger(name: string, fallback: number): number {
   return positiveInteger(Number(process.env[name]), fallback);
 }
 
 function positiveMs(value: number | undefined, fallback: number): number {
   return Number.isFinite(value) && value! > 0 ? value! : fallback;
+}
+
+function nonNegativeMs(value: number | undefined, fallback: number): number {
+  return Number.isFinite(value) && value! >= 0 ? value! : fallback;
 }
 
 function positiveInteger(value: number | undefined, fallback: number): number {

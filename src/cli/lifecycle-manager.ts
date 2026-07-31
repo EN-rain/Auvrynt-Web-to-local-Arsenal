@@ -248,10 +248,16 @@ export function createLifecycleManager(selfHealStartIntegrations: IntegrationBoo
 
     await mkdir(config.stateDir, { recursive: true, mode: 0o700 });
     await selfHealStartIntegrations(launchRoot, config.executables, integrationsForProfiles(profiles));
-    const tunnelResult = await ensureManagedTunnel(managedTunnelOptions(config.stateDir, config.port, config.tunnelProvider, config));
-    if (config.publicBaseUrl !== tunnelResult.record.url) {
+    const tunnelOptions = managedTunnelOptions(config.stateDir, config.port, config.tunnelProvider, config);
+    const tunnelResult = config.tunnelProvider === "custom"
+      ? undefined
+      : await ensureManagedTunnel(tunnelOptions);
+    const publicBaseUrl = tunnelResult?.record.url ?? config.publicBaseUrl;
+    if (config.tunnelProvider === "custom") {
+      await stopManagedTunnel(tunnelOptions);
+    } else if (config.publicBaseUrl !== publicBaseUrl) {
       const files = loadAuvryntFiles();
-      writeAuvryntConfig({ ...files.config, publicBaseUrl: tunnelResult.record.url });
+      writeAuvryntConfig({ ...files.config, publicBaseUrl });
     }
     const logPath = join(config.stateDir, "auvrynt.log");
     await rotateLogFile(logPath);
@@ -264,13 +270,17 @@ export function createLifecycleManager(selfHealStartIntegrations: IntegrationBoo
       detached: true,
       stdio: ["ignore", logHandle, logHandle],
       windowsHide: true,
-      env: { ...process.env, AUVRYNT_CONTROL_TOKEN: controlToken, AUVRYNT_MANAGED_TUNNEL_URL: tunnelResult.record.url },
+      env: {
+        ...process.env,
+        AUVRYNT_CONTROL_TOKEN: controlToken,
+        ...(config.tunnelProvider === "custom" ? {} : { AUVRYNT_MANAGED_TUNNEL_URL: publicBaseUrl }),
+      },
     });
     closeSync(logHandle);
     let childSpawnError: Error | undefined;
     child.once("error", (error) => { childSpawnError = error; });
     if (!child.pid) {
-      if (tunnelResult.created) await stopManagedTunnel(managedTunnelOptions(config.stateDir, config.port, config.tunnelProvider, config));
+      if (tunnelResult?.created) await stopManagedTunnel(tunnelOptions);
       throw new Error("Auvrynt could not create its background process.");
     }
     child.unref();
@@ -278,8 +288,8 @@ export function createLifecycleManager(selfHealStartIntegrations: IntegrationBoo
       await waitForBackgroundReady(config.stateDir, child.pid, config.host, config.port, () => childSpawnError);
     } catch (error) {
       await terminateRootProcess(child.pid).catch(() => undefined);
-      if (tunnelResult.created) {
-        await stopManagedTunnel(managedTunnelOptions(config.stateDir, config.port, config.tunnelProvider, config)).catch(() => undefined);
+      if (tunnelResult?.created) {
+        await stopManagedTunnel(tunnelOptions).catch(() => undefined);
       }
       throw error;
     }
@@ -288,7 +298,7 @@ export function createLifecycleManager(selfHealStartIntegrations: IntegrationBoo
       { label: "Workspace", value: launchRoot },
       { label: "Integrations", value: profiles.map((key) => INTEGRATION_LABELS[key]).join(", ") || "no optional integrations" },
       { label: "Dashboard", value: dashboardUrl(config.host, config.port) },
-      { label: "Public MCP", value: `${tunnelResult.record.url}/mcp` },
+      { label: "Public MCP", value: `${publicBaseUrl}/mcp` },
     ], ["Next: auvrynt status", ...RUNNING_COMMAND_HINTS]);
   }
 

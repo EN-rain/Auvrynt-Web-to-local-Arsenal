@@ -31,6 +31,7 @@ export async function startTunnel(
   port: number,
   options: TunnelStartOptions = {},
 ): Promise<TunnelProcess> {
+  if (provider === "custom") throw new Error("Custom external URLs are managed outside Auvrynt.");
   if (provider === "ngrok") {
     return startNgrokTunnel(port, {
       detached: options.detached,
@@ -43,6 +44,7 @@ export async function startTunnel(
 }
 
 export async function readManagedTunnel(options: ManagedTunnelOptions): Promise<ManagedTunnelRecord | undefined> {
+  if (options.provider === "custom") return undefined;
   const tunnelPath = managedTunnelPath(options.stateDir);
   const record = await readJsonFile<ManagedTunnelRecord>(tunnelPath);
   if (!record || !Number.isInteger(record.pid) || record.pid < 1) return undefined;
@@ -68,6 +70,7 @@ export async function readManagedTunnel(options: ManagedTunnelOptions): Promise<
 }
 
 export async function ensureManagedTunnel(options: ManagedTunnelOptions): Promise<ManagedTunnelResult> {
+  if (options.provider === "custom") throw new Error("Custom external URLs do not create a managed tunnel.");
   const existing = await readManagedTunnel(options);
   if (existing) {
     cleanupOrphanedTunnelProcesses(options, existing.pid);
@@ -127,6 +130,7 @@ export function tunnelCommandMatches(
   commandLine: string,
 ): boolean {
   const escapedPort = String(port).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (provider === "custom") return false;
   if (provider === "ngrok") {
     return new RegExp(`ngrok(?:\\.exe)?["']?\\s+http\\s+${escapedPort}(?:\\s|$)`, "i").test(commandLine);
   }
@@ -152,6 +156,7 @@ function cleanupOrphanedTunnelProcesses(
 }
 
 function listTunnelProcessCandidates(provider: TunnelProvider): TunnelProcessCandidate[] {
+  if (provider === "custom") return [];
   try {
     if (process.platform === "win32") {
       const executable = provider === "ngrok" ? "ngrok.exe" : "cloudflared.exe";
