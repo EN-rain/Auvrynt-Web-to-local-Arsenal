@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { identifyProvider, readConnectedClients, recordConnectedClient } from "./connection-registry.js";
 
 assert.equal(identifyProvider("ChatGPT Desktop", "mcp-client/1.0"), "ChatGPT");
+assert.equal(identifyProvider("Grok", "xai-mcp-client/1.0"), "Grok");
+assert.equal(identifyProvider(undefined, "xai/1.0"), "Grok / xAI");
 assert.equal(identifyProvider(undefined, "Kimi/1.2"), "Kimi");
 assert.equal(identifyProvider("custom-agent", undefined), "custom-agent");
 

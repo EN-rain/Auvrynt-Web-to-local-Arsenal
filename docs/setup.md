@@ -1,6 +1,6 @@
 # Setup Guide
 
-This guide is for users who want ChatGPT or another MCP host to work in local
+This guide is for users who want ChatGPT, Claude, Grok, Lovable, Bolt, or another MCP host to work in local
 projects through Auvrynt.
 
 ## Requirements
@@ -103,7 +103,7 @@ auvrynt serve
 
 ## Approve The Client
 
-When ChatGPT, Claude, or another MCP client connects, Auvrynt shows an Owner
+When ChatGPT, Claude, Grok, Lovable, Bolt, or another MCP client connects, Auvrynt shows an Owner
 token approval page. Enter the Owner token shown during setup, or retrieve it later with `auvrynt token`.
 
 The default config files are:
@@ -114,6 +114,24 @@ The default config files are:
 ```
 
 Keep `auth.json` private.
+
+## Connect Grok
+
+Start Auvrynt with the integrations you need, then copy the public MCP URL from
+`auvrynt status`:
+
+```powershell
+auvrynt start web
+auvrynt status
+```
+
+In Grok, open `grok.com/connectors`, choose **New Connector** → **Custom**, and
+paste the URL ending in `/mcp`. Grok must use the public HTTPS URL; it cannot
+reach `127.0.0.1`. Complete the Auvrynt Owner-token approval when prompted.
+
+For a URL that survives tunnel restarts, configure a reserved ngrok URL with
+`auvrynt tunnel` before creating the Grok connector. Cloudflare quick-tunnel
+URLs are temporary and must be replaced in Grok when they change.
 
 ## Check Your Setup
 

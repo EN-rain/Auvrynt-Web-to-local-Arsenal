@@ -126,7 +126,16 @@ AUVRYNT_ALLOWED_HOSTS="*" npx auvrynt start
 By default, Auvrynt allows redirects for:
 
 ```text
+grok.com
+console.x.ai
 chatgpt.com
+claude.ai
+claude.com
+oauth.lovable.app
+lovable.app
+lovable.dev
+api.lovable.dev
+bolt.new
 localhost
 127.0.0.1
 ```

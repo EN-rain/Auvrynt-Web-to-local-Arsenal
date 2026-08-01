@@ -60,7 +60,7 @@ Auvrynt uses a single-user OAuth approval flow.
 | `AUVRYNT_OAUTH_ACCESS_TOKEN_TTL_SECONDS` | `3600` |
 | `AUVRYNT_OAUTH_REFRESH_TOKEN_TTL_SECONDS` | `2592000` |
 | `AUVRYNT_OAUTH_SCOPES` | `auvrynt:read,auvrynt:write,auvrynt:process,auvrynt:web,auvrynt:software,auvrynt:godot,auvrynt:blender,auvrynt:aseprite,auvrynt:serena` |
-| `AUVRYNT_OAUTH_ALLOWED_REDIRECT_HOSTS` | `chatgpt.com,claude.ai,claude.com,localhost,127.0.0.1` |
+| `AUVRYNT_OAUTH_ALLOWED_REDIRECT_HOSTS` | `grok.com,console.x.ai,chatgpt.com,claude.ai,claude.com,oauth.lovable.app,lovable.app,lovable.dev,api.lovable.dev,bolt.new,localhost,127.0.0.1` |
 
 `auvrynt:blender-python` is intentionally **not** granted by default. Add it to `AUVRYNT_OAUTH_SCOPES` only when a trusted client must use the arbitrary Blender Python escape hatch. Auvrynt enforces scopes per tool call, not only at login.
 

@@ -23,6 +23,8 @@ export function identifyProvider(clientName?: string, userAgent?: string): strin
   const value = `${clientName ?? ""} ${userAgent ?? ""}`.trim();
   const normalized = value.toLowerCase();
   const knownProviders: Array<[string, string]> = [
+    ["grok", "Grok"],
+    ["xai", "Grok / xAI"],
     ["chatgpt", "ChatGPT"],
     ["openai", "OpenAI"],
     ["claude", "Claude"],

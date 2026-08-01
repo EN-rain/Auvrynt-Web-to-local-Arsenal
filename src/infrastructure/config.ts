@@ -328,6 +328,8 @@ function parseOAuthConfig(
     // a second, runtime gate and may change without reconnecting the web agent.
     scopes: parseOAuthScopes(env.AUVRYNT_OAUTH_SCOPES),
     allowedRedirectHosts: parseStringList(env.AUVRYNT_OAUTH_ALLOWED_REDIRECT_HOSTS, [
+      "grok.com",
+      "console.x.ai",
       "chatgpt.com",
       "claude.ai",
       "claude.com",

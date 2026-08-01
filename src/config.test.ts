@@ -125,6 +125,8 @@ assert.deepEqual(loadConfig(baseEnv).oauth.scopes, [
   "auvrynt:serena",
 ]);
 assert.deepEqual(loadConfig(baseEnv).oauth.allowedRedirectHosts, [
+  "grok.com",
+  "console.x.ai",
   "chatgpt.com",
   "claude.ai",
   "claude.com",

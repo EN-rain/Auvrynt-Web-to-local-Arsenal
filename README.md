@@ -29,7 +29,7 @@
 
 ## What is Auvrynt?
 
-Auvrynt is a **Model Context Protocol (MCP) server** you run on your own machine. It creates a secure, tunneled connection between AI clients like ChatGPT or Claude and your local development environment — your actual files, terminals, build tools, and project folders.
+Auvrynt is a **Model Context Protocol (MCP) server** you run on your own machine. It creates a secure, tunneled connection between AI clients like ChatGPT, Claude, or Grok and your local development environment — your actual files, terminals, build tools, and project folders.
 
 No cloud upload. No third-party storage. Your code stays on your machine.
 
@@ -140,7 +140,20 @@ Generated artifacts are kept under the active workspace's `auvrynt-logs` directo
 
 ## Connect an MCP Client
 
-Paste your `/mcp` URL into your AI client (ChatGPT, Claude, etc.):
+Primary MCP connectors are ChatGPT, Claude, and Grok. Lovable and Bolt are
+supported extra connectors.
+
+Paste your `/mcp` URL into the connector setup for one of these clients:
+
+| Connector | Setup location |
+| --- | --- |
+| ChatGPT | ChatGPT connector/app settings |
+| Claude | Claude connector settings |
+| Grok | `grok.com/connectors` → **New Connector** → **Custom** |
+| Lovable | Lovable MCP connectors |
+| Bolt | Bolt MCP connectors |
+
+Use the public HTTPS URL ending in `/mcp`, not the local dashboard URL:
 
 ```
 https://your-tunnel.trycloudflare.com/mcp
@@ -179,7 +192,7 @@ Authorization is required again after `auvrynt token reset` or any operation tha
 | `auvrynt status` | Show local MCP and integration status without modifying integration files |
 | `auvrynt token` | Print the Owner token only on explicit local request |
 | `auvrynt token reset` | Generate a new Owner token and clear saved connector authorizations |
-| `auvrynt connected` | Show recently observed ChatGPT, Kimi, Claude, or other MCP providers |
+| `auvrynt connected` | Show recently observed Grok, ChatGPT, Claude, Lovable, Bolt, or other MCP providers |
 | `auvrynt uninstall` | Remove Auvrynt configuration after confirmation |
 | `auvrynt uninstall -y` | Remove Auvrynt configuration without confirmation |
 | `auvrynt help` | Print the complete command reference |
