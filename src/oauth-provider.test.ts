@@ -75,7 +75,6 @@ try {
     codeChallenge: "test-challenge",
     scopes: ["auvrynt:read"],
     state: "test-state",
-    resource,
   }, {
     req: { method: "POST", body: { owner_token: config.ownerToken } },
     redirect: (_status: number, location: string) => {

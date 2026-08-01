@@ -245,6 +245,15 @@ function redirectHostAllowed(redirectUri: string, allowedHosts: string[]): boole
   return parsed.protocol === "https:" && allowedHosts.some((host) => host.toLowerCase() === hostname);
 }
 
+function redirectHostDescription(redirectUri: string): string {
+  try {
+    const parsed = new URL(redirectUri);
+    return `${parsed.protocol}//${parsed.hostname}`;
+  } catch {
+    return "invalid-uri";
+  }
+}
+
 function authorizationNonce(): string {
   return randomBytes(18).toString("base64url");
 }
@@ -304,8 +313,13 @@ export class InMemoryOAuthClientsStore implements OAuthRegisteredClientsStore {
     if (this.clients.size >= MAX_DYNAMIC_CLIENTS && !this.evictOldestInactiveClient()) {
       throw new InvalidRequestError("Dynamic OAuth client capacity reached while all registered clients are active.");
     }
-    if (!client.redirect_uris.every((uri) => redirectHostAllowed(uri, this.allowedRedirectHosts))) {
-      throw new InvalidRequestError("Client redirect_uri is not allowed for this Auvrynt server");
+    const rejectedRedirectHosts = client.redirect_uris
+      .filter((uri) => !redirectHostAllowed(uri, this.allowedRedirectHosts))
+      .map(redirectHostDescription);
+    if (rejectedRedirectHosts.length > 0) {
+      throw new InvalidRequestError(
+        `Client redirect_uri is not allowed for this Auvrynt server (rejected host(s): ${rejectedRedirectHosts.join(", ")})`,
+      );
     }
 
     const now = Math.floor(Date.now() / 1000);
@@ -388,9 +402,14 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     params: AuthorizationParams,
     res: Response,
   ): Promise<void> {
-    if (!params.resource || !checkResourceAllowed({ requestedResource: params.resource, configuredResource: this.resourceServerUrl })) {
+    // Some hosted MCP clients (including Bolt) omit the RFC 8707 resource
+    // parameter even after discovering the protected-resource metadata. Bind
+    // an omitted value to this server; never accept a different resource.
+    const requestedResource = params.resource ?? this.resourceServerUrl;
+    if (!checkResourceAllowed({ requestedResource, configuredResource: this.resourceServerUrl })) {
       throw new InvalidRequestError("Invalid or missing OAuth resource");
     }
+    params = { ...params, resource: requestedResource };
     if (!requestedScopesAllowed(params.scopes ?? [], this.config.scopes)) {
       throw new InvalidRequestError("Requested scope is not supported");
     }
