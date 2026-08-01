@@ -15,7 +15,7 @@ import {
 } from "@modelcontextprotocol/sdk/shared/auth-utils.js";
 import express from "express";
 import type { Request, Response } from "express";
-import { loadConfig, type ServerConfig } from "./config.js";
+import { loadConfig, oauthScopesForIntegrations, type ServerConfig } from "./config.js";
 import {
   isLoopbackRequest,
   logEvent,
@@ -110,6 +110,10 @@ export function createServer(config = loadConfig()): RunningServer {
     mcpUrl,
     join(config.stateDir, "oauth-state.json"),
   );
+  // A server restart can enable an integration without a live profile update.
+  // Extend existing grants to match the enabled local integrations so clients
+  // do not keep a stale, narrower tool list after reconnecting.
+  oauthProvider.grantScopesToExistingTokens(oauthScopesForIntegrations(config.integrations));
   const bearerAuth = requireBearerAuth({
     verifier: oauthProvider,
     requiredScopes: [],

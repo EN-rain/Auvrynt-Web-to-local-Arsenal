@@ -1,0 +1,17 @@
+{
+  "name": "auvrynt-bridge",
+  "displayName": "Auvrynt Bridge",
+  "description": "Authenticated local bridge for structured Auvrynt access to the active Aseprite editor.",
+  "version": "1.2.0",
+  "author": "Auvrynt",
+  "license": "MIT",
+  "categories": ["Scripts"],
+  "contributes": {
+    "scripts": [
+      {
+        "id": "auvrynt-bridge",
+        "path": "./auvrynt_bridge.lua"
+      }
+    ]
+  }
+}

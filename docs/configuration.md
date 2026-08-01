@@ -47,6 +47,9 @@ npx auvrynt config set publicBaseUrl https://auvrynt.example.com
 | `AUVRYNT_MAX_SESSIONS_PER_CLIENT` | Maximum reserved and established MCP sessions for one OAuth client. Defaults to the global limit and cannot be raised above 999. The Connectivity tab keeps both persisted limits aligned. |
 | `AUVRYNT_SERENA_ENABLED` | Enables the Serena runtime. When unset, startup enables Serena only if its executable or process is detected. Set to `0` to disable it completely. |
 | `AUVRYNT_SERENA_INTEGRATION_ENABLED` | Controls whether Serena tools are advertised to MCP clients. When unset, detection decides the default. Disabling it removes Serena from active clients' tool lists and stops active Serena sessions. |
+| `AUVRYNT_ASEPRITE_ENABLED` | Controls whether native Aseprite pixel-art tools are advertised. Defaults to enabled. |
+| `AUVRYNT_ASEPRITE_PATH` | Optional direct path to `aseprite.exe`/`aseprite`. |
+| `AUVRYNT_ASEPRITE_SOURCE_PATH` | Optional Aseprite source/build directory. Auvrynt checks `build/bin`, `bin`, then the source root for the executable. |
 
 ## OAuth
 
@@ -56,7 +59,7 @@ Auvrynt uses a single-user OAuth approval flow.
 | --- | --- |
 | `AUVRYNT_OAUTH_ACCESS_TOKEN_TTL_SECONDS` | `3600` |
 | `AUVRYNT_OAUTH_REFRESH_TOKEN_TTL_SECONDS` | `2592000` |
-| `AUVRYNT_OAUTH_SCOPES` | `auvrynt:read,auvrynt:write,auvrynt:process,auvrynt:web,auvrynt:software,auvrynt:godot,auvrynt:blender,auvrynt:serena` |
+| `AUVRYNT_OAUTH_SCOPES` | `auvrynt:read,auvrynt:write,auvrynt:process,auvrynt:web,auvrynt:software,auvrynt:godot,auvrynt:blender,auvrynt:aseprite,auvrynt:serena` |
 | `AUVRYNT_OAUTH_ALLOWED_REDIRECT_HOSTS` | `chatgpt.com,claude.ai,claude.com,localhost,127.0.0.1` |
 
 `auvrynt:blender-python` is intentionally **not** granted by default. Add it to `AUVRYNT_OAUTH_SCOPES` only when a trusted client must use the arbitrary Blender Python escape hatch. Auvrynt enforces scopes per tool call, not only at login.

@@ -1,13 +1,13 @@
 # Auvrynt Local Development Tools Guide
 
-Auvrynt extends Model Context Protocol (MCP) with tools for web application development, C#/.NET software development, Godot 4 game development, image inspection/comparison, and persistent process management.
+Auvrynt extends Model Context Protocol (MCP) with tools for web application development, C#/.NET software development, Godot 4 game development, Aseprite pixel-art editing, image inspection/comparison, and persistent process management.
 
 ---
 
 ## Architecture & Security Boundaries
 
 Use `get_connection_status` after `open_workspace` to automatically probe the
-authenticated MCP session, Blender, Godot, Cloudflare Tunnel, Serena, browser
+authenticated MCP session, Blender, Aseprite, Godot, Cloudflare Tunnel, Serena, browser
 support, Chrome MCP registration, and tracked workspace processes. Blender
 scene tools connect directly to the Blender Lab MCP endpoint shown in Blender
 preferences (`localhost:9876` by default).
@@ -61,7 +61,19 @@ created on demand and are not persistent connections.
 - `godot_run`: Launch Godot game or editor as persistent process. Environment variable `GODOT_EXECUTABLE` overrides path.
 - `inspect_godot_scene`: Parse `.tscn` text scene trees, node types, signals, and external resources.
 
-### Phase 7: Window Capture
+### Phase 7: Aseprite Pixel-Art Tools
+Auvrynt exposes 36 grouped Aseprite tools. Core categories:
+- Detection/readback/live editor: `aseprite_detect`, `aseprite_live_editor`, `aseprite_capture_current`, `aseprite_capture_canvas`, `aseprite_inspect_file`, `aseprite_read_pixels`.
+  - The live editor tool includes 46 allowlisted bridge commands for unsaved drawing, selections, layers/cels/tags, palettes, transforms, frame operations, cross-document copying, and live analysis.
+- QA: `aseprite_audit_sprite`, `aseprite_compare_documents`, `aseprite_animation_audit`.
+- Safety/maintenance: `aseprite_file_safety`, `aseprite_maintenance`, `aseprite_batch_process`, `aseprite_recovery`, `aseprite_extensions`.
+- Drawing/regions: `aseprite_create_sprite`, `aseprite_set_pixels`, `aseprite_draw_shapes`, `aseprite_draw_stroke`, `aseprite_draw_advanced`, `aseprite_edit_region`, `aseprite_manage_mask`, `aseprite_run_safe_command`.
+- Structure/animation: `aseprite_manage_layers`, `aseprite_compose_layers`, `aseprite_manage_frames`, `aseprite_manage_animation`, `aseprite_manage_tags`, `aseprite_manage_cels`, `aseprite_manage_document`.
+- Color/tilemap/import/export: `aseprite_set_palette`, `aseprite_manage_color`, `aseprite_import_sprite_sheet`, `aseprite_manage_tilemap`, `aseprite_export_sprite_sheet`, `aseprite_manage_export_preset`, `aseprite_convert_file`.
+
+Destructive source edits accept `expectedVersion` and `checkpoint`. Use the SHA-256 returned by `aseprite_file_safety` to reject stale writes. Recovery deletion and extension mutation additionally require `allowGlobalWrite=true`.
+
+### Phase 8: Window Capture
 - `capture_window`: Capture screenshot of Auvrynt-tracked application window (Windows only).
 - `godot_capture_game`: Wrap window capture for Godot game processes.
 
@@ -87,6 +99,19 @@ created on demand and are not persistent connections.
 4. dotnet_build(workspaceId, projectPath="MyApp.csproj")
 5. dotnet_test(workspaceId, projectPath="MyApp.Tests.csproj")
 6. dotnet_run(workspaceId, projectPath="MyApp.csproj")
+```
+
+### Aseprite Workflow
+```text
+1. open_workspace(path)
+2. aseprite_detect(workspaceId)
+3. aseprite_inspect_file(workspaceId, filePath="sprites/hero.aseprite")
+4. aseprite_read_pixels(...) or aseprite_audit_sprite(...) for exact evidence
+5. aseprite_file_safety(action="status") -> retain version
+6. aseprite_set_pixels(..., expectedVersion=version, checkpoint=true)
+7. aseprite_compare_documents(...) or aseprite_animation_audit(...)
+8. aseprite_manage_export_preset(action="run", name="game")
+9. aseprite_manage_export_preset(action="validate", name="game")
 ```
 
 ### Godot 4 Workflow

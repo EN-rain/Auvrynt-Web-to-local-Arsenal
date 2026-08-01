@@ -8,6 +8,7 @@ import { discoverLocalIntegrations, processDetected } from "../integration-disco
 import type { RecentLogEntry } from "../infrastructure/logger.js";
 import { recentLogEntries } from "../infrastructure/logger.js";
 import { getPlaywrightRuntimeStatus } from "../playwright-runtime.js";
+import { getAsepriteBridgeRuntimeStatus } from "../integrations/aseprite/aseprite-live-tools.js";
 import { dashboardHtml } from "./dashboard-page.js";
 import type { WorkspaceChangeAnalytics } from "./workspace-analytics.js";
 
@@ -70,6 +71,7 @@ const INTEGRATION_LABELS: Record<DashboardIntegrationKey, string> = {
   godotGdscript: "Godot GDScript",
   godotCsharp: "Godot C#",
   blender: "Blender",
+  aseprite: "Aseprite",
   serena: "Serena",
   playwright: "Playwright",
 };
@@ -120,6 +122,17 @@ export async function createDashboardView(
   const blenderAvailable = Boolean(
     discovered && (processDetected(discovered, "blender") || discovered.executables.blender),
   );
+  const asepriteRunning = Boolean(discovered && processDetected(discovered, "aseprite"));
+  const asepriteBridge = asepriteRunning
+    ? await getAsepriteBridgeRuntimeStatus()
+    : undefined;
+  const asepriteConnected = Boolean(asepriteRunning && asepriteBridge?.connected);
+  const asepriteAvailable = Boolean(asepriteRunning || discovered?.executables.aseprite);
+  const asepriteAvailableDetail = asepriteRunning
+    ? asepriteBridge?.installed
+      ? "Aseprite is running, but the Auvrynt live bridge is not responding. Restart Aseprite once after bridge installation, and close modal dialogs that can block extension timers."
+      : "Aseprite is running, but the Auvrynt live bridge is not installed. Native CLI tools remain available."
+    : "Aseprite native CLI is detected and ready on demand; launch Aseprite with the bridge installed for live editor control.";
   const serenaConnected = Boolean(discovered && processDetected(discovered, "serena"));
   const serenaAvailable = Boolean(discovered?.executables.serena || config.serena.executable);
   const agentProvider = runtime.sessions > 0
@@ -179,6 +192,14 @@ export async function createDashboardView(
         "Blender MCP bridge is connected.",
         "Blender is available; waiting for its bridge.",
         "Blender is not detected.",
+      ),
+      integration(
+        "aseprite",
+        asepriteConnected,
+        asepriteAvailable,
+        `Auvrynt live bridge ${asepriteBridge?.bridgeVersion ?? ""}`.trim() + " is connected to the running Aseprite editor.",
+        asepriteAvailableDetail,
+        "Aseprite is not detected, and its native CLI is unavailable.",
       ),
       integration(
         "serena",

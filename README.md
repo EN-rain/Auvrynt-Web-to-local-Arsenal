@@ -38,7 +38,7 @@ Connect once, then ask your AI to:
 - Open any approved project folder on your machine
 - Read, write, search, and edit real source files
 - Run shell commands, tests, builds, and package scripts
-- Work across web, .NET, Godot, and Blender projects
+- Work across web, .NET, Godot, Blender, and Aseprite projects
 - Capture screenshots of running apps
 - Use isolated Git worktrees for parallel coding sessions
 
@@ -114,6 +114,7 @@ Profiles are session-only: they override saved integration choices for the curre
 ```bash
 # One integration
 auvrynt start model      # Blender MCP port detection
+auvrynt start pixel      # Aseprite native CLI/Lua tools
 auvrynt start web        # Playwright/browser tools
 auvrynt start godotcs    # Godot C#
 auvrynt start godotgd    # Godot GDScript
@@ -189,7 +190,7 @@ Authorization is required again after `auvrynt token reset` or any operation tha
 
 ## What Your AI Can Do
 
-Once connected and a workspace is opened, your AI assistant has access to **139 tools** across:
+Once connected and a workspace is opened, your AI assistant has access to **over 150 tools** across:
 
 | Category | Capabilities |
 |---|---|
@@ -201,6 +202,7 @@ Once connected and a workspace is opened, your AI assistant has access to **139 
 | **.NET** | Inspect projects, restore, build, test, format |
 | **Godot** | Run projects, inspect scenes, C# build, GDScript diagnostics |
 | **Blender** | Scene audit, checkpoints, renders, export GLB |
+| **Aseprite** | Exact pixel drawing, layers, frames, tags, palettes, sheets, conversion |
 | **Git** | Worktree management, status, diff, branch ops |
 
 ---
@@ -215,6 +217,7 @@ Auvrynt automatically selects the right workflow guide based on your project typ
 | `App.sln` / `.csproj` without `project.godot` | Software Agent Guide |
 | `project.godot` (any language) | Godot Agent Guide |
 | `.blend` files | Blender Agent Guide |
+| `.aseprite` / `.ase` files | Aseprite Agent Guide |
 
 See [`PROJECT_ROUTER.md`](guides/PROJECT_ROUTER.md) for full routing rules.
 

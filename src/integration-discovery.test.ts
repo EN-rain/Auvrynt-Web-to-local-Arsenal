@@ -6,7 +6,7 @@ import { processDetected, type LocalIntegrationDiscovery } from "./integration-d
 import { findGodotProjectRoots } from "./cli/integration-bootstrap.js";
 
 const discovery: LocalIntegrationDiscovery = {
-  processes: ["blender.exe", "cloudflared.exe", "serena.exe"],
+  processes: ["blender.exe", "aseprite.exe", "cloudflared.exe", "serena.exe"],
   executables: { cloudflared: "C:/tools/cloudflared.exe", serena: "C:/tools/serena.exe" },
   ports: {
     blender_lab_mcp: true,
@@ -16,6 +16,7 @@ const discovery: LocalIntegrationDiscovery = {
 };
 
 assert.equal(processDetected(discovery, "blender"), true);
+assert.equal(processDetected(discovery, "aseprite"), true);
 assert.equal(processDetected(discovery, "cloudflare_tunnel"), true);
 assert.equal(processDetected(discovery, "serena"), true);
 assert.equal(processDetected(discovery, "godot"), false);

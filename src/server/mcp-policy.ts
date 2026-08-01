@@ -6,9 +6,12 @@ const GODOT_CSHARP_TOOL_MARKERS = ["dotnet", "csharp", "build_solutions", "gener
 
 export function requiredScopesForToolName(name: string): AuvryntScope[] {
   if (name === "open_workspace") return ["auvrynt:read", "auvrynt:write"];
+  if (name === "aseprite_capture_current") return ["auvrynt:aseprite", "auvrynt:process", "auvrynt:write"];
+  if (name === "aseprite_capture_canvas") return ["auvrynt:aseprite", "auvrynt:write"];
   if (name === "close_workspace") return ["auvrynt:write", "auvrynt:process"];
   if (name === "blender_execute_python") return ["auvrynt:blender", "auvrynt:blender-python"];
   if (name.startsWith("blender_")) return ["auvrynt:blender"];
+  if (name.startsWith("aseprite_")) return ["auvrynt:aseprite"];
   if (name.startsWith("godot_") || GENERIC_GODOT_TOOL_NAMES.has(name)) return ["auvrynt:godot"];
   if (name.startsWith("serena_")) return ["auvrynt:serena"];
   if (name === "start_dev_server") return ["auvrynt:web", "auvrynt:process"];
@@ -38,6 +41,11 @@ export function requiredScopesForToolCall(name: string, input: unknown): Auvrynt
   if (name === "dotnet_format" && input && typeof input === "object") {
     if ((input as { verifyOnly?: unknown }).verifyOnly !== true) required.add("auvrynt:write");
   }
+  if (name === "aseprite_recovery" && input && typeof input === "object") {
+    const action = (input as { action?: unknown }).action;
+    if (action === "open_recovery_ui") required.add("auvrynt:process");
+    if (action === "archive") required.add("auvrynt:write");
+  }
   return Array.from(required);
 }
 
@@ -65,6 +73,7 @@ function godotIntegrationEnabled(config: ServerConfig, toolName: string): boolea
 
 export function toolIntegrationEnabled(config: ServerConfig, name: string): boolean {
   if (name.startsWith("blender_")) return config.integrations.blender;
+  if (name.startsWith("aseprite_")) return config.integrations.aseprite;
   if (name.startsWith("godot_") || GENERIC_GODOT_TOOL_NAMES.has(name)) return godotIntegrationEnabled(config, name);
   if (PLAYWRIGHT_TOOL_NAMES.has(name)) return config.integrations.playwright;
   if (name.startsWith("serena_")) return config.integrations.serena && config.serena.enabled;

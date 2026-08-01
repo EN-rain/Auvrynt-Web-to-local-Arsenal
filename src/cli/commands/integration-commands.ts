@@ -13,6 +13,7 @@ export function completeIntegrationsConfig(
     godotGdscript: config?.godotGdscript ?? true,
     godotCsharp: config?.godotCsharp ?? true,
     blender: config?.blender ?? true,
+    aseprite: config?.aseprite ?? true,
     serena: config?.serena ?? true,
     playwright: config?.playwright ?? true,
   };

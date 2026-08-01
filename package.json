@@ -16,6 +16,7 @@
     "guides",
     "scripts",
     "addons",
+    "extensions",
     "README.md"
   ],
   "publishConfig": {

@@ -80,6 +80,7 @@ export function applyIntegrationProfile(profiles: IntegrationKey[]): void {
     godotGdscript: "AUVRYNT_GODOT_GDSCRIPT_ENABLED",
     godotCsharp: "AUVRYNT_GODOT_CSHARP_ENABLED",
     blender: "AUVRYNT_BLENDER_ENABLED",
+    aseprite: "AUVRYNT_ASEPRITE_ENABLED",
     serena: "AUVRYNT_SERENA_INTEGRATION_ENABLED",
     playwright: "AUVRYNT_PLAYWRIGHT_ENABLED",
   };

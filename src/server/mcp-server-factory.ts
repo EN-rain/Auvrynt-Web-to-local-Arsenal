@@ -29,6 +29,7 @@ import { registerDotnetGodotWindowTools } from "./tools/dotnet-godot-window-tool
 import { registerGodotCsharpTools } from "./tools/godot-csharp-tools-registration.js";
 import { registerGodotGdscriptTools } from "./tools/godot-gdscript-tools-registration.js";
 import { registerBlenderTools } from "./tools/blender-tools-registration.js";
+import { registerAsepriteTools } from "./tools/aseprite-tools-registration.js";
 import type { WorkspaceChangeTracker } from "./workspace-analytics.js";
 
 interface ToolNames {
@@ -136,6 +137,7 @@ export function createMcpServer(
   registerGodotCsharpTools(server, config, workspaces, processManager);
   registerGodotGdscriptTools(server, config, workspaces);
   registerBlenderTools(server, config, workspaces);
+  registerAsepriteTools(server, config, workspaces, processManager);
 
   if (config.oauth.scopes.includes("auvrynt:serena")) {
     registerSerenaTools(server, config, serenaManager, workspaces);
@@ -189,6 +191,7 @@ Project discovery: Use inspect_project to detect project type, package manager, 
 Image tools: Use inspect_image for dimensions/format/palette. Use compare_images for pixel-level diff. Use inspect_sprite and split_sprite_sheet for sprite sheets. Do not use view_image for analysis—use inspect_image.
 .NET tools: Use inspect_dotnet_project to read project structure, dotnet_restore/dotnet_build/dotnet_test for CLI operations, dotnet_run to start a .NET app as a persistent process, dotnet_format for formatting.
 Godot tools: Use detect_godot_project when a workspace contains project.godot. Use godot_run to start the game or editor as a persistent process. Use inspect_godot_scene to read .tscn scene trees. Configure the Godot executable via GODOT_EXECUTABLE environment variable.
+Aseprite tools: Use aseprite_detect to verify the configured source build, aseprite_inspect_file for layers/frames/tags, aseprite_set_pixels or aseprite_draw_shapes for exact pixel edits, and the export/convert tools for workspace-bound outputs. Aseprite files and output paths must stay inside the open workspace.
 Window capture: Use capture_window to screenshot a running application tracked by Auvrynt. Use godot_capture_game specifically for Godot game processes.
 Security: All paths must be workspace-relative. Never access files outside the opened workspace. Do not claim a screenshot or comparison succeeded unless the tool returned successfully.`;
 

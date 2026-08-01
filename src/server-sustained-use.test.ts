@@ -50,6 +50,7 @@ try {
       godotGdscript: batch % 2 === 0,
       godotCsharp: batch % 3 === 0,
       blender: batch % 2 === 1,
+      aseprite: batch % 5 === 0,
       serena: false,
       playwright: batch % 4 === 0,
     });

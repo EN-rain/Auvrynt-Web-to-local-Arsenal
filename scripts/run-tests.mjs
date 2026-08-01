@@ -53,6 +53,7 @@ const tests = [
   "src/godot-csharp-runner.test.ts",
   "src/godot-csharp-semantic.test.ts",
   "src/blender-tools.test.ts",
+  "src/aseprite-tools.test.ts",
   "src/godot-gdscript.test.ts",
   "src/review-checkpoints.test.ts",
   "src/workspaces.test.ts",

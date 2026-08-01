@@ -22,6 +22,7 @@ export interface LocalIntegrationDiscoveryOptions {
 
 const PROCESS_MARKERS: Record<string, string[]> = {
   blender: ["blender.exe", "blender"],
+  aseprite: ["aseprite.exe", "aseprite"],
   godot: ["godot.exe", "godot4.exe", "godot"],
   cloudflare_tunnel: ["cloudflared.exe", "cloudflared"],
   serena: ["serena.exe", "serena"],
@@ -99,6 +100,14 @@ async function findExecutable(command: string): Promise<string | undefined> {
   }
 }
 
+function findAsepriteInSource(sourcePath: string | undefined): string | undefined {
+  if (!sourcePath) return undefined;
+  const candidates = process.platform === "win32"
+    ? [join(sourcePath, "build", "bin", "aseprite.exe"), join(sourcePath, "bin", "aseprite.exe"), join(sourcePath, "aseprite.exe")]
+    : [join(sourcePath, "build", "bin", "aseprite"), join(sourcePath, "bin", "aseprite"), join(sourcePath, "aseprite")];
+  return candidates.find((candidate) => existsSync(candidate));
+}
+
 function hasProcess(processes: string[], markers: string[]): boolean {
   return processes.some((processName) => markers.some((marker) => processName === marker || processName.includes(marker)));
 }
@@ -147,12 +156,14 @@ async function performDiscovery(pollMs: number): Promise<LocalIntegrationDiscove
     return false;
   };
 
-  const [processes, cloudflaredSys, serenaSys, godotSys, blenderSys, blenderLabMcp, auvryntBlenderBridge, auvryntGodotBridge] = await Promise.all([
+  const configuredAseprite = configExecs.aseprite || findAsepriteInSource(configExecs.asepriteSource);
+  const [processes, cloudflaredSys, serenaSys, godotSys, blenderSys, asepriteSys, blenderLabMcp, auvryntBlenderBridge, auvryntGodotBridge] = await Promise.all([
     runningProcessNames(),
     configExecs.cloudflared ? undefined : findExecutable("cloudflared"),
     configExecs.serena ? undefined : findExecutable("serena"),
     configExecs.godot || configExecs.godotCsharp ? undefined : findExecutable("godot"),
     configExecs.blender ? undefined : findExecutable("blender"),
+    configuredAseprite ? undefined : findExecutable("aseprite"),
     pollPort(blenderMcpPort),
     pollPort(49323),
     pollPort(49322),
@@ -163,6 +174,7 @@ async function performDiscovery(pollMs: number): Promise<LocalIntegrationDiscove
   const godot = configExecs.godot || godotSys;
   const godotCsharp = configExecs.godotCsharp;
   const blender = configExecs.blender || blenderSys;
+  const aseprite = configuredAseprite || asepriteSys;
 
   return {
     processes,
@@ -172,6 +184,8 @@ async function performDiscovery(pollMs: number): Promise<LocalIntegrationDiscove
       godot,
       godotCsharp,
       blender,
+      aseprite,
+      asepriteSource: configExecs.asepriteSource,
     },
     ports: {
       blender_lab_mcp: blenderLabMcp,

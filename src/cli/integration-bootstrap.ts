@@ -11,6 +11,7 @@ import {
   type LocalIntegrationDiscovery,
 } from "../integration-discovery.js";
 import { ensureGlobalGodotPlugin } from "../godot-tools.js";
+import { ensureGlobalAsepriteBridge } from "../integrations/aseprite/aseprite-live-tools.js";
 import { ensurePlaywrightRuntime } from "../playwright-runtime.js";
 import type { IntegrationKey } from "../background-lifecycle.js";
 import { findCommand } from "../tunnels/tunnel-utils.js";
@@ -117,6 +118,13 @@ export async function selfHealStartIntegrations(
   }
 
   if (integrations.playwright) ensurePlaywrightRuntime();
+  if (integrations.aseprite) {
+    try {
+      await ensureGlobalAsepriteBridge();
+    } catch (error) {
+      console.warn(`[auvrynt] Could not install the Aseprite live bridge: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 
   if (!integrations.godotGdscript && !integrations.godotCsharp) {
     return { serenaExecutable };

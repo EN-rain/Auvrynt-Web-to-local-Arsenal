@@ -38,8 +38,14 @@ assert.deepEqual(requiredScopesForToolCall("dotnet_format", { verifyOnly: true }
 assert.deepEqual(requiredScopesForToolCall("dotnet_format", { verifyOnly: false }), ["auvrynt:software", "auvrynt:process", "auvrynt:write"]);
 assert.deepEqual(requiredScopesForToolCall("compare_images", {}), ["auvrynt:read"]);
 assert.deepEqual(requiredScopesForToolCall("compare_images", { diffOutputPath: "diff.png" }), ["auvrynt:read", "auvrynt:write"]);
+assert.deepEqual(requiredScopesForToolName("aseprite_capture_current"), ["auvrynt:aseprite", "auvrynt:process", "auvrynt:write"]);
+assert.deepEqual(requiredScopesForToolName("aseprite_capture_canvas"), ["auvrynt:aseprite", "auvrynt:write"]);
+assert.deepEqual(requiredScopesForToolCall("aseprite_recovery", { action: "list" }), ["auvrynt:aseprite"]);
+assert.deepEqual(requiredScopesForToolCall("aseprite_recovery", { action: "archive" }), ["auvrynt:aseprite", "auvrynt:write"]);
+assert.deepEqual(requiredScopesForToolCall("aseprite_recovery", { action: "open_recovery_ui" }), ["auvrynt:aseprite", "auvrynt:process"]);
 assert.deepEqual(requiredScopesForToolName("blender_get_scene_info"), ["auvrynt:blender"]);
 assert.deepEqual(requiredScopesForToolName("blender_execute_python"), ["auvrynt:blender", "auvrynt:blender-python"]);
+assert.deepEqual(requiredScopesForToolName("aseprite_set_pixels"), ["auvrynt:aseprite"]);
 assert.deepEqual(requiredScopesForToolName("godot_get_scene_tree"), ["auvrynt:godot"]);
 assert.deepEqual(requiredScopesForToolName("serena_find_symbol"), ["auvrynt:serena"]);
 
@@ -57,6 +63,7 @@ try {
     godotGdscript: false,
     godotCsharp: false,
     blender: true,
+    aseprite: true,
     serena: false,
     playwright: true,
   });

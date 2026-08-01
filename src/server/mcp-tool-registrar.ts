@@ -97,6 +97,7 @@ export const registerAppTool = ((server: McpServer, name: string, toolConfig: un
     );
     const invokeByIntegration = () => {
       if (name.startsWith("blender_")) return enqueueIntegration("blender", invokeHandler);
+      if (name.startsWith("aseprite_")) return enqueueIntegration("aseprite", invokeHandler);
       if (name.startsWith("godot_")) return enqueueIntegration("godot", invokeHandler);
       if (name.startsWith("serena_")) return enqueueIntegration("serena", invokeHandler);
       return invokeHandler();

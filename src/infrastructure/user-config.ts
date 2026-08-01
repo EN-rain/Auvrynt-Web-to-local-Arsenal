@@ -18,6 +18,8 @@ export interface AuvryntExecutablesConfig {
   godot?: string;
   godotCsharp?: string;
   blender?: string;
+  aseprite?: string;
+  asepriteSource?: string;
   [key: string]: string | undefined;
 }
 
@@ -25,6 +27,7 @@ export interface AuvryntIntegrationsConfig {
   godotGdscript?: boolean;
   godotCsharp?: boolean;
   blender?: boolean;
+  aseprite?: boolean;
   serena?: boolean;
   playwright?: boolean;
 }
@@ -81,12 +84,15 @@ const executablesSchema = z.object({
   godot: z.string().optional(),
   godotCsharp: z.string().optional(),
   blender: z.string().optional(),
+  aseprite: z.string().optional(),
+  asepriteSource: z.string().optional(),
 }).catchall(z.string());
 
 const integrationsSchema = z.object({
   godotGdscript: z.boolean().optional(),
   godotCsharp: z.boolean().optional(),
   blender: z.boolean().optional(),
+  aseprite: z.boolean().optional(),
   serena: z.boolean().optional(),
   playwright: z.boolean().optional(),
 }).strict();

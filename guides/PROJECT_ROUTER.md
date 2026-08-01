@@ -4,7 +4,7 @@
 
 Read this file first before any development work. Detect the active project or subproject, then load **only** the relevant guide. Do not load all guides by default.
 
-Available guides: `WEB_AGENT_GUIDE.md`, `SOFTWARE_AGENT_GUIDE.md`, `GODOT_AGENT_GUIDE.md`, `BLENDER_AGENT_GUIDE.md` (all in this `guides/` directory).
+Available guides: `WEB_AGENT_GUIDE.md`, `SOFTWARE_AGENT_GUIDE.md`, `GODOT_AGENT_GUIDE.md`, `BLENDER_AGENT_GUIDE.md`, `ASEPRITE_AGENT_GUIDE.md` (all in this `guides/` directory).
 
 ---
 
@@ -19,6 +19,11 @@ Inspect the workspace root for these indicators:
 - `addons/` with `plugin.cfg` and `__init__.py`
 - Blender asset library directories
 - Explicit user request mentioning Blender, 3D modeling, rigging, rendering, or UV mapping
+
+### Aseprite indicators (highest priority for pixel-art asset work)
+- `.aseprite`, `.ase`
+- Aseprite Lua scripts
+- Explicit user request mentioning Aseprite, exact pixel drawing, sprite animation, palettes, layers, tags, or frame timing
 
 ### Godot indicators
 - `project.godot`
@@ -71,7 +76,14 @@ If primary task involves 3D modeling, rendering, material, rigging, animation, U
 - **Primary guide**: `BLENDER_AGENT_GUIDE.md`
 - Do not load web, Godot, or software tools unless the task explicitly crosses into those domains
 
-### Rule 5 — Monorepo
+### Rule 5 — Aseprite / pixel-art assets
+If the primary task involves exact pixel editing, sprite animation, layers, palettes, tags, or Aseprite export:
+- **Primary guide**: `ASEPRITE_AGENT_GUIDE.md`
+- Use native `aseprite_*` tools rather than a GUI plugin unless live editor state is explicitly required.
+- If the sprite belongs to a Godot project, use `GODOT_AGENT_GUIDE.md` only for the engine-side import/runtime task.
+- Do not use image-generation tools as a substitute for exact pixel edits.
+
+### Rule 6 — Monorepo
 Identify the active subproject from the user request. Read only that subproject's guide. Refresh project state when switching subprojects.
 
 Example layout:
@@ -82,7 +94,7 @@ services/api/      → SOFTWARE_AGENT_GUIDE.md
 assets/characters/ → BLENDER_AGENT_GUIDE.md (.blend files)
 ```
 
-### Rule 6 — Unclear
+### Rule 7 — Unclear
 Inspect only the smallest useful set of root files. State which guide was selected and why. Do not scan the entire repository.
 
 ---
@@ -113,6 +125,7 @@ Inspect only the smallest useful set of root files. State which guide was select
 | `package.json` + `vite.config.*` | WEB_AGENT_GUIDE.md |
 | `*.sln` / `*.csproj` (no `project.godot`) | SOFTWARE_AGENT_GUIDE.md |
 | `.blend` / `bpy` scripts / explicit Blender request | BLENDER_AGENT_GUIDE.md |
+| `.aseprite` / `.ase` / explicit pixel-art animation request | ASEPRITE_AGENT_GUIDE.md |
 | Godot project + `.blend` source asset task | GODOT_AGENT_GUIDE.md primary, BLENDER_AGENT_GUIDE.md secondary |
 | Web project + `.blend` source asset task | WEB_AGENT_GUIDE.md primary, BLENDER_AGENT_GUIDE.md secondary |
 

@@ -39,7 +39,12 @@ assert.equal(loadConfig(baseEnv).skillsEnabled, true);
 assert.equal(loadConfig({ ...baseEnv, AUVRYNT_SKILLS: "0" }).skillsEnabled, false);
 assert.equal(loadConfig({ ...baseEnv, AUVRYNT_SKILLS: "1" }).skillsEnabled, true);
 assert.equal(loadConfig(baseEnv).serena.enabled, false);
+assert.equal(loadConfig(baseEnv).integrations.aseprite, true);
 assert.equal(loadConfig(baseEnv).integrations.serena, false);
+assert.equal(
+  loadConfig({ ...baseEnv, AUVRYNT_ASEPRITE_SOURCE_PATH: "C:/src/aseprite" }).executables.asepriteSource,
+  "C:/src/aseprite",
+);
 assert.equal(loadConfig({ ...baseEnv, AUVRYNT_SERENA_ENABLED: "0" }).serena.enabled, false);
 assert.equal(loadConfig({ ...baseEnv, AUVRYNT_SERENA_INTEGRATION_ENABLED: "0" }).integrations.serena, false);
 
@@ -106,12 +111,18 @@ assert.deepEqual(loadConfig(baseEnv).oauth.scopes, [
   "auvrynt:software",
   "auvrynt:godot",
   "auvrynt:blender",
+  "auvrynt:aseprite",
   "auvrynt:serena",
 ]);
 assert.deepEqual(loadConfig(baseEnv).oauth.allowedRedirectHosts, [
   "chatgpt.com",
   "claude.ai",
   "claude.com",
+  "oauth.lovable.app",
+  "lovable.app",
+  "lovable.dev",
+  "api.lovable.dev",
+  "bolt.new",
   "localhost",
   "127.0.0.1",
 ]);
@@ -132,6 +143,7 @@ assert.deepEqual(
     AUVRYNT_GODOT_GDSCRIPT_ENABLED: "0",
     AUVRYNT_GODOT_CSHARP_ENABLED: "0",
     AUVRYNT_BLENDER_ENABLED: "1",
+    AUVRYNT_ASEPRITE_ENABLED: "1",
     AUVRYNT_SERENA_INTEGRATION_ENABLED: "0",
     AUVRYNT_PLAYWRIGHT_ENABLED: "0",
   }).oauth.scopes,

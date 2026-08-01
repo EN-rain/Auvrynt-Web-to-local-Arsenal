@@ -23,6 +23,7 @@ export const SUPPORTED_SCOPES = [
   "auvrynt:godot",
   "auvrynt:blender",
   "auvrynt:blender-python",
+  "auvrynt:aseprite",
   "auvrynt:serena",
 ] as const;
 
@@ -41,6 +42,7 @@ export const SCOPE_DESCRIPTIONS: Record<AuvryntScope, string> = {
   "auvrynt:godot": "Use Godot project and editor tools",
   "auvrynt:blender": "Use workspace-bound Blender 3D tools",
   "auvrynt:blender-python": "Execute arbitrary Python inside Blender (host-level capability)",
+  "auvrynt:aseprite": "Use workspace-bound Aseprite pixel-art and animation tools",
   "auvrynt:serena": "Use local Serena semantic code tools",
 };
 
@@ -289,6 +291,7 @@ export function oauthScopesForIntegrations(integrations: AuvryntIntegrationsConf
   if (integrations.godotGdscript || integrations.godotCsharp) scopes.push("auvrynt:godot");
   if (integrations.godotCsharp) scopes.push("auvrynt:software", "auvrynt:process");
   if (integrations.blender) scopes.push("auvrynt:blender");
+  if (integrations.aseprite) scopes.push("auvrynt:aseprite");
   if (integrations.serena) scopes.push("auvrynt:serena");
   return Array.from(new Set(scopes));
 }
@@ -316,6 +319,11 @@ function parseOAuthConfig(
       "chatgpt.com",
       "claude.ai",
       "claude.com",
+      "oauth.lovable.app",
+      "lovable.app",
+      "lovable.dev",
+      "api.lovable.dev",
+      "bolt.new",
       "localhost",
       "127.0.0.1",
     ]),
@@ -373,6 +381,8 @@ function parseExecutablesConfig(env: NodeJS.ProcessEnv, filesConfig: AuvryntUser
     godot: cleanExecutablePath(env.AUVRYNT_GODOT_PATH ?? configExecs.godot),
     godotCsharp: cleanExecutablePath(env.AUVRYNT_GODOT_CSHARP_PATH ?? configExecs.godotCsharp),
     blender: cleanExecutablePath(env.AUVRYNT_BLENDER_PATH ?? configExecs.blender),
+    aseprite: cleanExecutablePath(env.AUVRYNT_ASEPRITE_PATH ?? configExecs.aseprite),
+    asepriteSource: cleanExecutablePath(env.AUVRYNT_ASEPRITE_SOURCE_PATH ?? configExecs.asepriteSource),
   };
 }
 
@@ -388,6 +398,7 @@ function parseIntegrationsConfig(env: NodeJS.ProcessEnv, filesConfig: AuvryntUse
     godotGdscript: parseOptionalIntegrationBoolean(env.AUVRYNT_GODOT_GDSCRIPT_ENABLED, "AUVRYNT_GODOT_GDSCRIPT_ENABLED") ?? configIntegrations.godotGdscript ?? true,
     godotCsharp: parseOptionalIntegrationBoolean(env.AUVRYNT_GODOT_CSHARP_ENABLED, "AUVRYNT_GODOT_CSHARP_ENABLED") ?? configIntegrations.godotCsharp ?? true,
     blender: parseOptionalIntegrationBoolean(env.AUVRYNT_BLENDER_ENABLED, "AUVRYNT_BLENDER_ENABLED") ?? configIntegrations.blender ?? true,
+    aseprite: parseOptionalIntegrationBoolean(env.AUVRYNT_ASEPRITE_ENABLED, "AUVRYNT_ASEPRITE_ENABLED") ?? configIntegrations.aseprite ?? true,
     serena: parseOptionalIntegrationBoolean(
       env.AUVRYNT_SERENA_INTEGRATION_ENABLED ?? env.AUVRYNT_SERENA_ENABLED,
       "AUVRYNT_SERENA_INTEGRATION_ENABLED",

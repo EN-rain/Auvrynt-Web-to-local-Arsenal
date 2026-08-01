@@ -21,6 +21,7 @@ writeAuvryntConfig({
     godotGdscript: false,
     godotCsharp: true,
     blender: false,
+    aseprite: true,
     serena: true,
     playwright: true,
   },
@@ -37,6 +38,7 @@ assert.equal(loaded.config.port, 49321);
 assert.equal(loaded.config.maxSessions, 3);
 assert.equal(loaded.config.maxSessionsPerClient, 2);
 assert.equal(loaded.config.integrations?.blender, false);
+assert.equal(loaded.config.integrations?.aseprite, true);
 assert.equal(loaded.config.serena?.maxInstances, 2);
 assert.equal(loaded.auth.ownerToken, "test-owner-token-that-is-long-enough");
 assert.equal(readdirSync(configDir).some((name) => name.endsWith(".tmp")), false);

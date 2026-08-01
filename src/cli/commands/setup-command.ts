@@ -1,12 +1,14 @@
 import * as prompts from "@clack/prompts";
 import { ensureGlobalGodotPlugin } from "../../godot-tools.js";
+import { ensureGlobalAsepriteBridge } from "../../integrations/aseprite/aseprite-live-tools.js";
 import { loadAuvryntFiles, writeAuvryntConfig } from "../../user-config.js";
 
 const SETUP_TOOL_LABELS: Record<string, string> = {
   godot: "Godot        - GDScript game engine",
   godotCsharp: "Godot C#     - .NET / Mono Godot build",
+  asepriteSource: "Aseprite     - source/build directory",
 };
-const SETUP_TOOL_KEYS = ["godot", "godotCsharp"] as const;
+const SETUP_TOOL_KEYS = ["godot", "godotCsharp", "asepriteSource"] as const;
 type SetupToolKey = (typeof SETUP_TOOL_KEYS)[number];
 
 export async function runSetupCommand(args: string[] = []): Promise<void> {
@@ -18,11 +20,17 @@ export async function runSetupCommand(args: string[] = []): Promise<void> {
       godot: "godot",
       godotcsharp: "godotCsharp",
       "godot-csharp": "godotCsharp",
+      aseprite: "asepriteSource",
+      "aseprite-source": "asepriteSource",
     };
     const key = toolKeyMap[args[0].toLowerCase()];
     if (key) {
       const exePath = args.slice(1).join(" ").trim().replace(/^["']|["']$/g, "").trim();
       writeAuvryntConfig({ ...files.config, executables: { ...existingExecs, [key]: exePath } });
+      if (key === "asepriteSource") {
+        const bridge = await ensureGlobalAsepriteBridge();
+        console.log(`Installed Aseprite live bridge: ${bridge.targetPath}`);
+      }
       console.log(`Updated ${key} executable path: ${exePath}`);
       return;
     }
@@ -46,7 +54,9 @@ export async function runSetupCommand(args: string[] = []): Promise<void> {
   const labelName = SETUP_TOOL_LABELS[key].split(" - ")[0].trim();
   const placeholder = key === "godot"
     ? "e.g. C:\\Program Files\\Godot\\Godot.exe"
-    : "e.g. C:\\Program Files\\Godot_v4-mono\\Godot.exe  (.NET build)";
+    : key === "godotCsharp"
+      ? "e.g. C:\\Program Files\\Godot_v4-mono\\Godot.exe  (.NET build)"
+      : "e.g. C:\\Users\\you\\src\\aseprite  (contains build\\bin\\aseprite.exe)";
   const answer = await prompts.text({
     message: `${labelName} executable path`,
     placeholder,
@@ -64,9 +74,14 @@ export async function runSetupCommand(args: string[] = []): Promise<void> {
     executables: { ...files.config.executables, [key]: executablePath },
   });
 
-  const pluginResult = ensureGlobalGodotPlugin();
-  if (pluginResult.installed) {
-    prompts.log.success(`Installed global Godot Editor plugin: ${pluginResult.targetPath}`);
+  if (key === "godot" || key === "godotCsharp") {
+    const pluginResult = ensureGlobalGodotPlugin();
+    if (pluginResult.installed) {
+      prompts.log.success(`Installed global Godot Editor plugin: ${pluginResult.targetPath}`);
+    }
+  } else if (key === "asepriteSource") {
+    const bridge = await ensureGlobalAsepriteBridge();
+    prompts.log.success(`Installed Aseprite live bridge: ${bridge.targetPath}`);
   }
   prompts.note(`${labelName.padEnd(14)} -> ${executablePath}`, "Saved to ~/.auvrynt/config.json");
   prompts.outro("Setup complete. Run `auvrynt status` to verify.");
