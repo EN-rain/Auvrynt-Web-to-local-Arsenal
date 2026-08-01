@@ -56,6 +56,8 @@ assert.doesNotMatch(dashboardSource, /window\.confirm/);
 assert.match(dashboardContractSource, /\.server-state\s*\{[^}]*border:\s*0/);
 assert.match(dashboardSource, /id="session-limit-form"/);
 assert.match(dashboardSource, /__auvrynt\/dashboard\/session-limit/);
+assert.match(dashboardSource, /id="session-idle-timeout-form"/);
+assert.match(dashboardSource, /__auvrynt\/dashboard\/session-idle-timeout/);
 assert.doesNotMatch(dashboardSource, /id="pause-logs"/);
 assert.doesNotMatch(dashboardSource, /id="clear-logs"/);
 assert.match(dashboardSource, /class="log-filter-row"/);

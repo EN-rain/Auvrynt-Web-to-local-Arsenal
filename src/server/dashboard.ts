@@ -51,6 +51,7 @@ export interface DashboardView {
   allowedRoots: string[];
   sessions: number;
   maxSessions: number;
+  sessionIdleTimeoutMinutes: number;
   runningProcesses: number;
   workspaceChanges: WorkspaceChangeAnalytics;
   integrations: DashboardIntegration[];
@@ -166,6 +167,7 @@ export async function createDashboardView(
     allowedRoots: [...config.allowedRoots],
     sessions: runtime.sessions,
     maxSessions: config.maxSessions,
+    sessionIdleTimeoutMinutes: Math.round(config.sessionIdleTimeoutMs / 60_000),
     runningProcesses: runtime.runningProcesses,
     workspaceChanges: runtime.workspaceChanges,
     integrations: [

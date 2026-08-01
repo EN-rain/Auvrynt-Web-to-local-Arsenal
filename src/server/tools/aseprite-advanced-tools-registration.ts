@@ -288,7 +288,7 @@ export function registerAsepriteAdvancedTools(
     inputSchema: {
       workspaceId: WORKSPACE_ID_SCHEMA,
       filePath: z.string(),
-      action: z.enum(["inspect", "set_palette_entry", "set_transparent_index", "remap_color", "assign_profile", "convert_profile", "remove_profile", "load_palette", "save_palette", "quantize"]),
+      action: z.enum(["inspect", "set_palette_entry", "set_transparent_index", "remap_color", "assign_profile", "convert_profile", "remove_profile", "load_palette", "save_palette", "quantize", "apply_palette_preset"]),
       index: z.number().int().min(0).optional(),
       color: COLOR_SCHEMA.optional(),
       fromColor: COLOR_SCHEMA.optional(),
@@ -296,6 +296,7 @@ export function registerAsepriteAdvancedTools(
       tolerance: z.number().int().min(0).max(255).optional(),
       profilePath: z.string().optional(),
       palettePath: z.string().optional(),
+      preset: z.enum(["gameboy", "pico8", "cga", "c64", "dawnbringer16", "grayscale_4", "monochrome"]).optional(),
       maxColors: z.number().int().min(2).max(256).optional(),
       dithering: z.enum(["none", "ordered", "old"]).optional(),
       ditheringMatrix: z.string().optional(),
@@ -354,11 +355,15 @@ export function registerAsepriteAdvancedTools(
 
   registerAppTool(server, "aseprite_manage_animation", {
     title: "Manage Aseprite Animation",
-    description: "Move/copy/reverse frames, set multiple durations, and update tag names, ranges, direction, and repeat count.",
+      description: "Move/copy/reverse frames, set durations, update tags, or tween cel positions with pixel-safe easing.",
     inputSchema: {
       workspaceId: WORKSPACE_ID_SCHEMA,
       filePath: z.string(),
-      action: z.enum(["move_frame", "copy_frame", "reverse_range", "set_durations", "update_tag"]),
+      action: z.enum(["move_frame", "copy_frame", "reverse_range", "set_durations", "update_tag", "tween_cel_position"]),
+      layer: z.string().optional(),
+      easing: z.enum(["linear", "ease_in", "ease_out", "smoothstep"]).optional(),
+      targetX: z.number().int().optional(),
+      targetY: z.number().int().optional(),
       frame: z.number().int().positive().optional(),
       targetFrame: z.number().int().positive().optional(),
       from: z.number().int().positive().optional(),

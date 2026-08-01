@@ -2,7 +2,15 @@ import type { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/se
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { randomUUID } from "node:crypto";
 import { logEvent, sessionIdPrefix } from "../logger.js";
-import { MAX_MCP_SESSIONS, type ServerConfig } from "../config.js";
+import {
+  DEFAULT_SESSION_IDLE_TIMEOUT_MS,
+  MAX_MCP_SESSIONS,
+  MAX_SESSION_IDLE_TIMEOUT_MS,
+  MIN_SESSION_IDLE_TIMEOUT_MS,
+  type ServerConfig,
+} from "../config.js";
+
+export { DEFAULT_SESSION_IDLE_TIMEOUT_MS } from "../config.js";
 
 export type SessionState = "creating" | "active" | "disconnected" | "closing" | "expired";
 export type SessionCloseReason =
@@ -56,7 +64,6 @@ export interface SessionRegistryOptions {
   startCleanupTimer?: boolean;
 }
 
-export const DEFAULT_SESSION_IDLE_TIMEOUT_MS = 12 * 60 * 60 * 1000;
 export const DEFAULT_DISCONNECT_GRACE_MS = 0;
 export const DEFAULT_SESSION_RESERVATION_TIMEOUT_MS = 60 * 1000;
 export const DEFAULT_SESSION_CLOSE_TIMEOUT_MS = 5 * 1000;
@@ -71,7 +78,7 @@ export class SessionRegistry {
   private readonly closingPromises = new Map<string, Promise<void>>();
   private readonly cleanupTimer?: ReturnType<typeof setInterval>;
   private readonly now: () => number;
-  private readonly sessionIdleTimeoutMs: number;
+  private sessionIdleTimeoutMs: number;
   private readonly disconnectGraceMs: number;
   private readonly reservationTimeoutMs: number;
   private readonly closeTimeoutMs: number;
@@ -86,9 +93,11 @@ export class SessionRegistry {
     options: SessionRegistryOptions = {},
   ) {
     this.now = options.now ?? Date.now;
-    this.sessionIdleTimeoutMs = positiveMs(
+    this.sessionIdleTimeoutMs = boundedPositiveMs(
       options.sessionIdleTimeoutMs,
       positiveEnvMs("AUVRYNT_SESSION_IDLE_MS", DEFAULT_SESSION_IDLE_TIMEOUT_MS),
+      MIN_SESSION_IDLE_TIMEOUT_MS,
+      MAX_SESSION_IDLE_TIMEOUT_MS,
     );
     this.disconnectGraceMs = nonNegativeMs(
       options.disconnectGraceMs,
@@ -193,6 +202,15 @@ export class SessionRegistry {
       this.maxSessions,
       HARD_MAX_SESSIONS,
       positiveInteger(maxSessionsPerOwner, this.maxSessions),
+    );
+  }
+
+  updateSessionIdleTimeout(timeoutMs: number): void {
+    this.sessionIdleTimeoutMs = boundedPositiveMs(
+      timeoutMs,
+      DEFAULT_SESSION_IDLE_TIMEOUT_MS,
+      MIN_SESSION_IDLE_TIMEOUT_MS,
+      MAX_SESSION_IDLE_TIMEOUT_MS,
     );
   }
 
@@ -637,6 +655,11 @@ function positiveEnvInteger(name: string, fallback: number): number {
 
 function positiveMs(value: number | undefined, fallback: number): number {
   return Number.isFinite(value) && value! > 0 ? value! : fallback;
+}
+
+function boundedPositiveMs(value: number | undefined, fallback: number, minimum: number, maximum: number): number {
+  const resolved = positiveMs(value, fallback);
+  return Math.min(maximum, Math.max(minimum, resolved));
 }
 
 function nonNegativeMs(value: number | undefined, fallback: number): number {

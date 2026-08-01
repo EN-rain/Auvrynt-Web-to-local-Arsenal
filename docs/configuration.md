@@ -41,7 +41,7 @@ npx auvrynt config set publicBaseUrl https://auvrynt.example.com
 | `AUVRYNT_OAUTH_OWNER_TOKEN` | Owner token for OAuth approval. Must be at least 16 characters. |
 | `AUVRYNT_WORKTREE_ROOT` | Directory for managed Git worktrees. Defaults to `~/.auvrynt/worktrees`. |
 | `AUVRYNT_STATE_DIR` | Directory for SQLite state. Defaults to `~/.local/share/auvrynt`. |
-| `AUVRYNT_SESSION_IDLE_MS` | MCP session inactivity before automatic closure. Defaults to 12 hours. Sessions with in-flight requests or tool calls are not expired. |
+| `AUVRYNT_SESSION_IDLE_MS` | MCP session inactivity before automatic closure. Defaults to 12 hours; valid range is 1 minute to 7 days. Sessions with in-flight requests or tool calls are not expired. |
 | `AUVRYNT_DISCONNECT_GRACE_MS` | Optional retention time after a session becomes disconnected. Defaults to `0`, so an idle session closes at its timeout without an additional grace period. Persistent processes started with `start_process` continue independently. |
 | `AUVRYNT_MAX_SESSIONS` | Maximum reserved and established MCP sessions across all OAuth clients. Defaults to 999 and cannot be raised above 999. The Connectivity tab can persist any value from 1 to 999 when this environment variable is unset. |
 | `AUVRYNT_MAX_SESSIONS_PER_CLIENT` | Maximum reserved and established MCP sessions for one OAuth client. Defaults to the global limit and cannot be raised above 999. The Connectivity tab keeps both persisted limits aligned. |

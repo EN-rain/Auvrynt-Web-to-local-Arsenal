@@ -17,6 +17,21 @@ const MAX_SHAPES = 1_024;
 
 export type AsepriteColorMode = "rgb" | "grayscale" | "indexed";
 export type AsepriteTagDirection = "forward" | "reverse" | "ping_pong";
+export type AsepritePalettePreset = "gameboy" | "pico8" | "cga" | "c64" | "dawnbringer16" | "grayscale_4" | "monochrome";
+
+const ASEPRITE_PALETTE_PRESETS: Record<AsepritePalettePreset, string[]> = {
+  gameboy: ["#0F380F", "#306230", "#8BAC0F", "#9BBC0F"],
+  cga: ["#000000", "#55FFFF", "#FF55FF", "#FFFFFF"],
+  c64: ["#000000", "#FFFFFF", "#883932", "#67B6BD", "#8B3F96", "#55A049", "#40318D", "#BFCE72", "#8B5429", "#574200", "#B86962", "#505050", "#787878", "#94E089", "#7869C4", "#ABABAB"],
+  grayscale_4: ["#000000", "#555555", "#AAAAAA", "#FFFFFF"],
+  monochrome: ["#000000", "#FFFFFF"],
+  dawnbringer16: ["#140C1C", "#442434", "#30346D", "#4E4A4E", "#854C30", "#346524", "#D04648", "#757161", "#597DCE", "#D27D2C", "#8595A1", "#6DAA2C", "#D2AA99", "#6DC2CA", "#DAD45E", "#DEEED6"],
+  pico8: ["#000000", "#1D2B53", "#7E2553", "#008751", "#AB5236", "#5F574F", "#C2C3C7", "#FFF1E8", "#FF004D", "#FFA300", "#FFEC27", "#00E436", "#29ADFF", "#83769C", "#FF77A8", "#FFCCAA"],
+};
+
+export function getAsepritePalettePreset(name: AsepritePalettePreset): string[] {
+  return [...ASEPRITE_PALETTE_PRESETS[name]];
+}
 
 export interface AsepritePixelEdit {
   x: number;
@@ -989,4 +1004,3 @@ export async function asepriteConvertFile(
     return errorResponse(`Aseprite conversion failed: ${sanitizeCliOutput(String(error?.stderr || error?.message || String(error)))}`);
   }
 }
-

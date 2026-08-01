@@ -24,6 +24,7 @@ const view: DashboardView = {
   allowedRoots: ["C:\\Users\\LENOVO\\Desktop\\Projectsss\\Moonless"],
   sessions: 1,
   maxSessions: 999,
+  sessionIdleTimeoutMinutes: 720,
   runningProcesses: 2,
   workspaceChanges: {
     workspaceId: "ws_dashboard_test",
@@ -83,6 +84,7 @@ let stopCompleted = false;
 let workspaceRequests = 0;
 let workspacePickerRequests = 0;
 let sessionLimitRequests = 0;
+let sessionIdleTimeoutRequests = 0;
 let ngrokTokenRequests = 0;
 let selectedWorkspacePath: string | undefined;
 
@@ -141,6 +143,13 @@ const server = createServer(async (request, response) => {
     view.maxSessions = 3;
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ message: "MCP session limit changed to 3.", maxSessions: 3 }));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/__auvrynt/dashboard/session-idle-timeout") {
+    sessionIdleTimeoutRequests++;
+    view.sessionIdleTimeoutMinutes = 60;
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ message: "MCP idle timeout changed to 60 minutes.", idleTimeoutMinutes: 60 }));
     return;
   }
   if (request.method === "POST" && url.pathname === "/__auvrynt/dashboard/workspace") {
@@ -383,6 +392,12 @@ try {
     assert.equal(await page.locator("#metric-sessions").textContent(), "1 / 3");
     assert.equal(await page.locator("#server-state-title").textContent(), "Server online");
     assert.equal(await page.locator("#save-session-limit").isDisabled(), false);
+    await page.locator("#session-idle-timeout-input").fill("60");
+    await page.locator("#save-session-idle-timeout").click();
+    await page.waitForFunction(() => document.querySelector("#action-notice")?.textContent === "MCP idle timeout changed to 60 minutes.");
+    assert.equal(sessionIdleTimeoutRequests, 1);
+    assert.equal(await page.locator("#session-idle-timeout-input").inputValue(), "60");
+    assert.equal(await page.locator("#save-session-idle-timeout").isDisabled(), false);
     await context.close();
   }
 } finally {

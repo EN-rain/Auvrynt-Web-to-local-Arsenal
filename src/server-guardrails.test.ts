@@ -140,6 +140,8 @@ try {
     assert.match(localDashboardHtml, /id="confirm-dialog"/);
     assert.match(localDashboardHtml, /id="session-limit-form"/);
     assert.match(localDashboardHtml, /\/__auvrynt\/dashboard\/session-limit/);
+    assert.match(localDashboardHtml, /id="session-idle-timeout-form"/);
+    assert.match(localDashboardHtml, /\/__auvrynt\/dashboard\/session-idle-timeout/);
     assert.match(localDashboardHtml, /Command reference/);
     assert.match(localDashboardHtml, /Recent events/);
     assert.match(localDashboardHtml, /auvrynt start godotcs/);

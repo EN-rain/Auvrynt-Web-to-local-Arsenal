@@ -84,7 +84,7 @@ Document structure and animation:
 - `aseprite_manage_layers` — basic layer creation, naming, visibility, deletion, and opacity.
 - `aseprite_compose_layers` — groups, duplicate/merge/flatten, background conversion, ordering, locking, blending, and soloing.
 - `aseprite_manage_frames` — add, duplicate, delete, and retime frames.
-- `aseprite_manage_animation` — frame movement/copy/reversal, bulk timing, and tag range/direction/repeat updates.
+- `aseprite_manage_animation` — frame movement/copy/reversal, bulk timing, tag range/direction/repeat updates, and guarded cel-position tweening with linear/ease-in/ease-out/smoothstep easing.
 - `aseprite_manage_tags` — basic tag creation, rename, and deletion.
 - `aseprite_manage_cels` — inspect/create/delete/move/duplicate/link/unlink cels and edit opacity/z-index.
 - `aseprite_manage_document` — resize/crop/trim, grid, pixel ratio, user data, slices, pivots, and nine-slice data.
@@ -92,7 +92,7 @@ Document structure and animation:
 Color, palettes, tilemaps, import, and export:
 
 - `aseprite_set_palette` — replace the complete document palette.
-- `aseprite_manage_color` — inspect/edit palette entries, transparent index, remap colors, ICC profiles, palette files, quantization, and dithering.
+- `aseprite_manage_color` — inspect/edit palette entries, transparent index, remap colors, ICC profiles, palette files, quantization, dithering, and built-in Game Boy, PICO-8, CGA, C64, DawnBringer16, grayscale, and monochrome presets.
 - `aseprite_import_sprite_sheet` — convert a gridded image into frames, timing, and tags.
 - `aseprite_manage_tilemap` — native tilesets, tilemap layers, tile pixels, map cells/flip flags, metadata, import, and export.
 - `aseprite_export_sprite_sheet` — standard sheet and JSON export.

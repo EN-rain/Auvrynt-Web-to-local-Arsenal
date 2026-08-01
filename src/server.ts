@@ -92,6 +92,7 @@ export interface RunningServer {
   config: ServerConfig;
   updateIntegrations(integrations: ServerConfig["integrations"], options?: { serenaExecutable?: string }): Promise<{ updated: boolean; activeRequests: number; activeToolCalls: number; closedSessions: number }>;
   updateSessionLimit(maxSessions: number): void;
+  updateSessionIdleTimeout(timeoutMs: number): void;
   updateWorkspaceRoots(roots: string[]): { updated: boolean; activeToolCalls: number; closedWorkspaces: number };
   close(): Promise<void>;
 }
@@ -102,7 +103,11 @@ export function createServer(config = loadConfig()): RunningServer {
     host: config.host,
     ...(allowedHosts ? { allowedHosts } : {}),
   });
-  const sessionRegistry = new SessionRegistry(config, { maxSessions: config.maxSessions, maxSessionsPerOwner: config.maxSessionsPerClient });
+  const sessionRegistry = new SessionRegistry(config, {
+    maxSessions: config.maxSessions,
+    maxSessionsPerOwner: config.maxSessionsPerClient,
+    sessionIdleTimeoutMs: config.sessionIdleTimeoutMs,
+  });
   const mcpUrl = new URL("/mcp", config.publicBaseUrl);
   const resourceServerUrl = resourceUrlFromServerUrl(mcpUrl);
   const oauthProvider = new SingleUserOAuthProvider(
@@ -644,6 +649,10 @@ export function createServer(config = loadConfig()): RunningServer {
       sessionRegistry.updateLimits(maxSessions);
       config.maxSessions = maxSessions;
       config.maxSessionsPerClient = maxSessions;
+    },
+    updateSessionIdleTimeout(timeoutMs) {
+      sessionRegistry.updateSessionIdleTimeout(timeoutMs);
+      config.sessionIdleTimeoutMs = timeoutMs;
     },
     updateWorkspaceRoots(roots) {
       if (activeToolCalls > 0) return { updated: false, activeToolCalls, closedWorkspaces: 0 };

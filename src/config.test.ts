@@ -40,6 +40,16 @@ assert.equal(loadConfig({ ...baseEnv, AUVRYNT_SKILLS: "0" }).skillsEnabled, fals
 assert.equal(loadConfig({ ...baseEnv, AUVRYNT_SKILLS: "1" }).skillsEnabled, true);
 assert.equal(loadConfig(baseEnv).serena.enabled, false);
 assert.equal(loadConfig(baseEnv).integrations.aseprite, true);
+assert.equal(loadConfig(baseEnv).sessionIdleTimeoutMs, 12 * 60 * 60 * 1000);
+assert.equal(loadConfig({ ...baseEnv, AUVRYNT_SESSION_IDLE_MS: String(60 * 60 * 1000) }).sessionIdleTimeoutMs, 60 * 60 * 1000);
+assert.throws(
+  () => loadConfig({ ...baseEnv, AUVRYNT_SESSION_IDLE_MS: "59999" }),
+  /Invalid AUVRYNT_SESSION_IDLE_MS/,
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, AUVRYNT_SESSION_IDLE_MS: String(7 * 24 * 60 * 60 * 1000 + 1) }),
+  /Invalid AUVRYNT_SESSION_IDLE_MS/,
+);
 assert.equal(loadConfig(baseEnv).integrations.serena, false);
 assert.equal(
   loadConfig({ ...baseEnv, AUVRYNT_ASEPRITE_SOURCE_PATH: "C:/src/aseprite" }).executables.asepriteSource,

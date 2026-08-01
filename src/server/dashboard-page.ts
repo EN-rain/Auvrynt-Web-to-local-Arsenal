@@ -143,7 +143,8 @@ export function dashboardHtml(view: DashboardView, nonce: string): string {
                 <div class="connection-row"><span class="connection-label">Local MCP</span><span class="connection-value"><a id="local-mcp" href="${escapeHtml(view.localMcpUrl)}">${escapeHtml(view.localMcpUrl)}</a></span><button class="icon-button" type="button" data-copy-url="local" aria-label="Copy Local MCP URL" title="Copy Local MCP URL">⧉</button></div>
                 <div class="connection-row"><span class="connection-label">Public MCP</span><span class="connection-value"><a id="public-mcp" href="${escapeHtml(view.publicMcpUrl)}">${escapeHtml(view.publicMcpUrl)}</a></span><button class="icon-button" type="button" data-copy-url="public" aria-label="Copy Public MCP URL" title="Copy Public MCP URL">⧉</button></div>
                 <div class="connection-row"><span class="connection-label">Workspace</span><span class="connection-value" id="workspace" title="${escapeHtml(firstRoot)}">${escapeHtml(firstRoot || "No workspace configured")}</span><button class="icon-button" id="edit-workspace" type="button" aria-label="Choose workspace folder" title="Choose workspace folder"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 6.5h6l2 2h9v9.75a1.75 1.75 0 0 1-1.75 1.75H5.25a1.75 1.75 0 0 1-1.75-1.75z"/><path d="M3.5 9h17"/></svg></button></div>
-                <form class="session-limit-form" id="session-limit-form"><div class="session-limit-copy"><strong>MCP session limit</strong></div><input class="session-limit-input" id="session-limit-input" type="text" inputmode="numeric" pattern="[1-9][0-9]{0,2}" maxlength="3" value="${view.maxSessions}" aria-label="Maximum concurrent MCP sessions" /><button class="icon-button" id="save-session-limit" type="submit" aria-label="Apply MCP session limit" title="Apply MCP session limit"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4l10.5-10.5a2.12 2.12 0 0 0-3-3L5 17v3z"/><path d="m13.5 8.5 3 3"/></svg></button></form>
+                <form class="session-limit-form" id="session-limit-form"><div class="session-limit-copy"><strong>MCP session limit</strong><small>Maximum concurrent connections</small></div><input class="session-limit-input" id="session-limit-input" type="text" inputmode="numeric" pattern="[1-9][0-9]{0,2}" maxlength="3" value="${view.maxSessions}" aria-label="Maximum concurrent MCP sessions" /><button class="icon-button" id="save-session-limit" type="submit" aria-label="Apply MCP session limit" title="Apply MCP session limit"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4l10.5-10.5a2.12 2.12 0 0 0-3-3L5 17v3z"/><path d="m13.5 8.5 3 3"/></svg></button></form>
+                <form class="session-limit-form session-idle-timeout-form" id="session-idle-timeout-form"><div class="session-limit-copy"><strong>MCP idle timeout</strong><small>Inactive sessions close; active tool calls are protected</small></div><input class="session-limit-input" id="session-idle-timeout-input" type="text" inputmode="numeric" pattern="[1-9][0-9]{0,4}" maxlength="5" value="${view.sessionIdleTimeoutMinutes}" aria-label="MCP idle timeout in minutes" /><span class="session-time-unit">min</span><button class="icon-button" id="save-session-idle-timeout" type="submit" aria-label="Apply MCP idle timeout" title="Apply MCP idle timeout"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4l10.5-10.5a2.12 2.12 0 0 0-3-3L5 17v3z"/><path d="m13.5 8.5 3 3"/></svg></button></form>
               </div>
             </section>
 
@@ -230,6 +231,9 @@ export function dashboardHtml(view: DashboardView, nonce: string): string {
         const sessionLimitForm = document.getElementById("session-limit-form");
         const sessionLimitInput = document.getElementById("session-limit-input");
         const saveSessionLimitButton = document.getElementById("save-session-limit");
+        const sessionIdleTimeoutForm = document.getElementById("session-idle-timeout-form");
+        const sessionIdleTimeoutInput = document.getElementById("session-idle-timeout-input");
+        const saveSessionIdleTimeoutButton = document.getElementById("save-session-idle-timeout");
         let confirmResolver = null;
         let refreshTimer = null;
 
@@ -354,6 +358,9 @@ export function dashboardHtml(view: DashboardView, nonce: string): string {
           document.getElementById("nav-session-count").textContent = state.sessions + "/" + state.maxSessions;
           if (document.activeElement !== sessionLimitInput && !sessionLimitInput.disabled) {
             sessionLimitInput.value = String(state.maxSessions);
+          }
+          if (document.activeElement !== sessionIdleTimeoutInput && !sessionIdleTimeoutInput.disabled) {
+            sessionIdleTimeoutInput.value = String(state.sessionIdleTimeoutMinutes);
           }
         }
 
@@ -872,6 +879,35 @@ export function dashboardHtml(view: DashboardView, nonce: string): string {
             saveSessionLimitButton.disabled = false;
             saveSessionLimitButton.setAttribute("aria-busy", "false");
             sessionLimitInput.disabled = false;
+          }
+        });
+
+        sessionIdleTimeoutForm.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const idleTimeoutMinutes = Number(sessionIdleTimeoutInput.value);
+          if (!Number.isInteger(idleTimeoutMinutes) || idleTimeoutMinutes < 1 || idleTimeoutMinutes > 10080) {
+            showToast("MCP idle timeout must be between 1 minute and 10080 minutes (7 days).", "error");
+            sessionIdleTimeoutInput.focus();
+            return;
+          }
+          if (idleTimeoutMinutes === state.sessionIdleTimeoutMinutes) {
+            showToast("MCP idle timeout is already " + idleTimeoutMinutes + " minutes.");
+            return;
+          }
+          saveSessionIdleTimeoutButton.disabled = true;
+          saveSessionIdleTimeoutButton.setAttribute("aria-busy", "true");
+          sessionIdleTimeoutInput.disabled = true;
+          try {
+            const result = await postAction("/__auvrynt/dashboard/session-idle-timeout", { idleTimeoutMinutes });
+            state.sessionIdleTimeoutMinutes = result.idleTimeoutMinutes;
+            renderAgentPresence();
+            showToast(result.message || "MCP idle timeout changed.");
+          } catch (error) {
+            showToast(error instanceof Error ? error.message : String(error), "error");
+          } finally {
+            saveSessionIdleTimeoutButton.disabled = false;
+            saveSessionIdleTimeoutButton.setAttribute("aria-busy", "false");
+            sessionIdleTimeoutInput.disabled = false;
           }
         });
 

@@ -9,6 +9,7 @@ import {
   assertInteger,
   assertPositiveInteger,
   errorResponse,
+  getAsepritePalettePreset,
   luaString,
   openSpriteScript,
   parseColor,
@@ -525,7 +526,7 @@ export async function asepriteManageColor(
   input: {
     workspaceId: string;
     filePath: string;
-    action: "inspect" | "set_palette_entry" | "set_transparent_index" | "remap_color" | "assign_profile" | "convert_profile" | "remove_profile" | "load_palette" | "save_palette" | "quantize";
+    action: "inspect" | "set_palette_entry" | "set_transparent_index" | "remap_color" | "assign_profile" | "convert_profile" | "remove_profile" | "load_palette" | "save_palette" | "quantize" | "apply_palette_preset";
     index?: number;
     color?: string;
     fromColor?: string;
@@ -533,6 +534,7 @@ export async function asepriteManageColor(
     tolerance?: number;
     profilePath?: string;
     palettePath?: string;
+    preset?: "gameboy" | "pico8" | "cga" | "c64" | "dawnbringer16" | "grayscale_4" | "monochrome";
     maxColors?: number;
     dithering?: "none" | "ordered" | "old";
     ditheringMatrix?: "bayer2x2" | "bayer4x4" | "bayer8x8" | string;
@@ -576,10 +578,20 @@ if not sprite:saveAs(${luaString(temporary)}) then fail("Unable to save quantize
     const from = input.fromColor ? parseColor(input.fromColor) : undefined;
     const to = input.toColor ? parseColor(input.toColor) : undefined;
     const tolerance = Math.max(0, Math.min(255, assertInteger(input.tolerance ?? 0, "tolerance")));
+    const presetColors = input.preset ? getAsepritePalettePreset(input.preset) : undefined;
+    const presetLua = presetColors ? `{${presetColors.map((color) => {
+      const parsed = parseColor(color);
+      return `{r=${parsed.r},g=${parsed.g},b=${parsed.b},a=${parsed.a}}`;
+    }).join(",")}}` : "nil";
     const result = await runLua(config, registry, input.workspaceId, `
 ${openSpriteScript(file.absolute)}
 local action=${luaString(input.action)}
-if action=="set_palette_entry" then
+if action=="apply_palette_preset" then
+  if ${presetLua}==nil then fail("preset is required") end
+  local colors=${presetLua} local new_palette=Palette(#colors)
+  for index,color in ipairs(colors) do new_palette:setColor(index-1,Color(color)) end
+  sprite:setPalette(new_palette)
+elseif action=="set_palette_entry" then
   local index=${input.index ?? -1} if index<0 or #sprite.palettes==0 or index>=#sprite.palettes[1] then fail("Palette index is outside the palette") end
   sprite.palettes[1]:setColor(index,Color(${input.color ? luaColor(input.color) : "{r=0,g=0,b=0,a=255}"}))
 elseif action=="set_transparent_index" then
@@ -742,7 +754,11 @@ export async function asepriteManageAnimation(
   input: {
     workspaceId: string;
     filePath: string;
-    action: "move_frame" | "copy_frame" | "reverse_range" | "set_durations" | "update_tag";
+    action: "move_frame" | "copy_frame" | "reverse_range" | "set_durations" | "update_tag" | "tween_cel_position";
+    layer?: string;
+    easing?: "linear" | "ease_in" | "ease_out" | "smoothstep";
+    targetX?: number;
+    targetY?: number;
     frame?: number;
     targetFrame?: number;
     from?: number;
@@ -769,6 +785,26 @@ elseif action=="update_tag" then
   local tag=nil for _,item in ipairs(sprite.tags) do if item.name==${luaString(input.tagName ?? "")} then tag=item break end end if tag==nil then fail("Tag was not found") end
   ${input.newName ? `tag.name=${luaString(input.newName)}` : ""} tag.aniDir=${directionLua} ${input.repeats !== undefined ? `tag.repeats=${Math.max(0, assertInteger(input.repeats, "repeats"))}` : ""}
   ${input.from !== undefined && input.to !== undefined ? `tag.fromFrame=sprite.frames[${input.from}] tag.toFrame=sprite.frames[${input.to}]` : ""}
+elseif action=="tween_cel_position" then
+  local layer=find_layer(sprite.layers,${luaString(input.layer ?? "")})
+  if layer==nil or layer.isGroup then fail("A drawable layer is required") end
+  local first=${input.from ?? 1} local last=${input.to ?? 1}
+  if first<1 or last>#sprite.frames or first>=last then fail("A valid tween frame range is required") end
+  local first_cel=layer:cel(first)
+  if first_cel==nil then fail("The first tween frame has no cel on the selected layer") end
+  local start_x=first_cel.position.x local start_y=first_cel.position.y
+  local end_x=${input.targetX ?? 0} local end_y=${input.targetY ?? 0}
+  local easing=${luaString(input.easing ?? "smoothstep")}
+  local function ease(t)
+    if easing=="ease_in" then return t*t end
+    if easing=="ease_out" then return 1-(1-t)*(1-t) end
+    if easing=="smoothstep" then return t*t*(3-2*t) end
+    return t
+  end
+  for frame_number=first,last do
+    local cel=layer:cel(frame_number)
+    if cel~=nil then local t=ease((frame_number-first)/(last-first)) cel.position=Point(math.floor(start_x+(end_x-start_x)*t+0.5),math.floor(start_y+(end_y-start_y)*t+0.5)) end
+  end
 else
   local frame=${input.frame ?? input.from ?? 1} local target=${input.targetFrame ?? input.to ?? 1}
   if frame<1 or frame>#sprite.frames or target<1 or target>#sprite.frames then fail("Frame is outside the sprite") end

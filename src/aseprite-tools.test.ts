@@ -14,7 +14,7 @@ import {
 import { asepriteFileSafety } from "./integrations/aseprite/aseprite-safety-tools.js";
 import { getAsepriteBridgeRuntimeStatus } from "./integrations/aseprite/aseprite-live-tools.js";
 import { asepriteManageTilemap } from "./integrations/aseprite/aseprite-specialized-tools.js";
-import { resolveAsepriteExecutable } from "./aseprite-tools.js";
+import { getAsepritePalettePreset, resolveAsepriteExecutable } from "./aseprite-tools.js";
 import { toolIntegrationEnabled } from "./server/mcp-policy.js";
 import { WorkspaceRegistry } from "./workspaces.js";
 
@@ -33,6 +33,7 @@ try {
   } as unknown as ServerConfig;
 
   assert.equal(await resolveAsepriteExecutable(config), executable);
+  assert.deepEqual(getAsepritePalettePreset("gameboy"), ["#0F380F", "#306230", "#8BAC0F", "#9BBC0F"]);
   assert.equal(toolIntegrationEnabled(config, "aseprite_detect"), true);
   assert.equal(toolIntegrationEnabled(config, "aseprite_read_pixels"), true);
   assert.equal(
@@ -86,6 +87,8 @@ try {
     assert.match(registrationSources, new RegExp(`registerAppTool\\(server, \\"${toolName}\\"`));
   }
   assert.equal(expectedTools.length, 36);
+  assert.match(registrationSources, /apply_palette_preset/);
+  assert.match(registrationSources, /tween_cel_position/);
   const liveRegistration = await readFile("src/server/tools/aseprite-advanced-tools-registration.ts", "utf8");
   assert.match(liveRegistration, /"run_live_command"/);
   assert.match(liveRegistration, /"get_image_data"/);

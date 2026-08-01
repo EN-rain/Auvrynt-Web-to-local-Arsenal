@@ -58,6 +58,9 @@ export interface SerenaServerConfig {
 }
 
 export const MAX_MCP_SESSIONS = 999;
+export const MIN_SESSION_IDLE_TIMEOUT_MS = 60 * 1000;
+export const DEFAULT_SESSION_IDLE_TIMEOUT_MS = 12 * 60 * 60 * 1000;
+export const MAX_SESSION_IDLE_TIMEOUT_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface ServerConfig {
   host: string;
@@ -67,6 +70,7 @@ export interface ServerConfig {
   allowedHosts: string[];
   maxSessions: number;
   maxSessionsPerClient: number;
+  sessionIdleTimeoutMs: number;
   publicBaseUrl: string;
   minimalTools: boolean;
   toolNaming: ToolNamingMode;
@@ -227,6 +231,14 @@ function parseMcpSessionLimit(
   const parsed = parsePositiveInteger(value, fallback, name);
   if (parsed > MAX_MCP_SESSIONS) {
     throw new Error(`Invalid ${name}: ${value}. Maximum is ${MAX_MCP_SESSIONS}.`);
+  }
+  return parsed;
+}
+
+function parseSessionIdleTimeout(value: string | number | undefined, fallback: number, name: string): number {
+  const parsed = parsePositiveInteger(value, fallback, name);
+  if (parsed < MIN_SESSION_IDLE_TIMEOUT_MS || parsed > MAX_SESSION_IDLE_TIMEOUT_MS) {
+    throw new Error(`Invalid ${name}: ${value}. Must be between ${MIN_SESSION_IDLE_TIMEOUT_MS} and ${MAX_SESSION_IDLE_TIMEOUT_MS} milliseconds.`);
   }
   return parsed;
 }
@@ -439,6 +451,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       env.AUVRYNT_MAX_SESSIONS_PER_CLIENT ?? files.config.maxSessionsPerClient ?? files.config.maxSessions,
       MAX_MCP_SESSIONS,
       "AUVRYNT_MAX_SESSIONS_PER_CLIENT",
+    ),
+    sessionIdleTimeoutMs: parseSessionIdleTimeout(
+      env.AUVRYNT_SESSION_IDLE_MS ?? files.config.sessionIdleTimeoutMs,
+      DEFAULT_SESSION_IDLE_TIMEOUT_MS,
+      "AUVRYNT_SESSION_IDLE_MS",
     ),
     publicBaseUrl,
     minimalTools: parseMinimalTools(env),

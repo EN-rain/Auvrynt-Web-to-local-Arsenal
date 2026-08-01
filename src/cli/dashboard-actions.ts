@@ -9,7 +9,12 @@ import {
   type InstanceLockRecord,
   type IntegrationKey,
 } from "../background-lifecycle.js";
-import { MAX_MCP_SESSIONS, type ServerConfig } from "../config.js";
+import {
+  MAX_MCP_SESSIONS,
+  MAX_SESSION_IDLE_TIMEOUT_MS,
+  MIN_SESSION_IDLE_TIMEOUT_MS,
+  type ServerConfig,
+} from "../config.js";
 import {
   activateNgrokAuthtoken,
   addNgrokAuthtoken,
@@ -295,6 +300,36 @@ export function registerDashboardActions({
     res.json({
       message: `MCP session limit changed to ${maxSessions}.`,
       maxSessions,
+    });
+  });
+
+  app.post("/__auvrynt/dashboard/session-idle-timeout", async (req, res) => {
+    if (rejectUnauthorized(req, res) || rejectRateLimited(res)) return;
+    if (process.env.AUVRYNT_SESSION_IDLE_MS !== undefined) {
+      res.status(409).json({
+        error: "MCP idle timeout is controlled by AUVRYNT_SESSION_IDLE_MS. Remove that environment override before editing it here.",
+      });
+      return;
+    }
+    const body = req.body as { idleTimeoutMinutes?: unknown };
+    const idleTimeoutMinutes = Number(body.idleTimeoutMinutes);
+    const timeoutMs = idleTimeoutMinutes * 60 * 1000;
+    if (!Number.isInteger(idleTimeoutMinutes)
+      || timeoutMs < MIN_SESSION_IDLE_TIMEOUT_MS
+      || timeoutMs > MAX_SESSION_IDLE_TIMEOUT_MS) {
+      res.status(400).json({
+        error: `MCP idle timeout must be a whole number of minutes between ${MIN_SESSION_IDLE_TIMEOUT_MS / 60_000} and ${MAX_SESSION_IDLE_TIMEOUT_MS / 60_000}.`,
+      });
+      return;
+    }
+    const files = loadAuvryntFiles();
+    writeAuvryntConfig({ ...files.config, sessionIdleTimeoutMs: timeoutMs });
+    runningServer.updateSessionIdleTimeout(timeoutMs);
+    logEvent(config.logging, "info", "dashboard_session_idle_timeout_updated", { idleTimeoutMinutes });
+    res.json({
+      message: `MCP idle timeout changed to ${idleTimeoutMinutes} minutes.`,
+      sessionIdleTimeoutMs: timeoutMs,
+      idleTimeoutMinutes,
     });
   });
 
