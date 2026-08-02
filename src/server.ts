@@ -86,7 +86,6 @@ const eventLoopProbe = setInterval(() => {
   expectedEventLoopProbeAt = now + 1_000;
 }, 1_000);
 eventLoopProbe.unref();
-
 export interface RunningServer {
   app: ReturnType<typeof createMcpExpressApp>;
   config: ServerConfig;
@@ -96,18 +95,13 @@ export interface RunningServer {
   updateWorkspaceRoots(roots: string[]): { updated: boolean; activeToolCalls: number; closedWorkspaces: number };
   close(): Promise<void>;
 }
-
 export function createServer(config = loadConfig()): RunningServer {
   const allowedHosts = config.allowedHosts.includes("*") ? undefined : Array.from(new Set([config.host, ...config.allowedHosts]));
   const app = createMcpExpressApp({
     host: config.host,
     ...(allowedHosts ? { allowedHosts } : {}),
   });
-  const sessionRegistry = new SessionRegistry(config, {
-    maxSessions: config.maxSessions,
-    maxSessionsPerOwner: config.maxSessionsPerClient,
-    sessionIdleTimeoutMs: config.sessionIdleTimeoutMs,
-  });
+  const sessionRegistry = new SessionRegistry(config, { maxSessions: config.maxSessions, maxSessionsPerOwner: config.maxSessionsPerClient, sessionIdleTimeoutMs: config.sessionIdleTimeoutMs });
   const mcpUrl = new URL("/mcp", config.publicBaseUrl);
   const resourceServerUrl = resourceUrlFromServerUrl(mcpUrl);
   const oauthProvider = new SingleUserOAuthProvider(
@@ -146,11 +140,9 @@ export function createServer(config = loadConfig()): RunningServer {
   let activeToolCalls = 0;
   let lastMcpActivityAt: number | undefined;
   let acceptingRequests = true;
-
   app.set("trust proxy", "loopback");
   app.disable("x-powered-by");
   app.use(express.json({ limit: "4mb" }));
-
   app.use((req, res, next) => {
     const requestId = randomUUID();
     const startedAt = performance.now();
@@ -171,7 +163,6 @@ export function createServer(config = loadConfig()): RunningServer {
     });
     next();
   });
-
   app.use((_req, res, next) => {
     if (!acceptingRequests) {
       res.status(503).json({ error: "Auvrynt is shutting down" });
@@ -179,7 +170,6 @@ export function createServer(config = loadConfig()): RunningServer {
     }
     next();
   });
-
   registerOAuthRateLimits(app);
   app.use(
     mcpAuthRouter({
@@ -650,10 +640,7 @@ export function createServer(config = loadConfig()): RunningServer {
       config.maxSessions = maxSessions;
       config.maxSessionsPerClient = maxSessions;
     },
-    updateSessionIdleTimeout(timeoutMs) {
-      sessionRegistry.updateSessionIdleTimeout(timeoutMs);
-      config.sessionIdleTimeoutMs = timeoutMs;
-    },
+    updateSessionIdleTimeout(timeoutMs) { sessionRegistry.updateSessionIdleTimeout(timeoutMs); config.sessionIdleTimeoutMs = timeoutMs; },
     updateWorkspaceRoots(roots) {
       if (activeToolCalls > 0) return { updated: false, activeToolCalls, closedWorkspaces: 0 };
       return { updated: true, activeToolCalls: 0, closedWorkspaces: workspaces.replaceAllowedRoots(roots).length };

@@ -71,3 +71,16 @@ renders/
 # Godot local editor state
 .godot/
 *.import
+
+# Databases & local runtime storage
+.freebuff/
+*.db
+*.db-shm
+*.db-wal
+
+# Logs & Scratch
+auvrynt-logs/
+scratch/
+
+.freebuff
+progress.md

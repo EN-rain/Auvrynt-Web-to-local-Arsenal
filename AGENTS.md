@@ -1,6 +1,6 @@
 # Auvrynt
 
-This project exposes a local development workspace over MCP so ChatGPT, Claude,
+This project exposes a local development workspace over MCP so ChatGPT, Claude, Grok,
 or another MCP-capable host can operate directly on this machine's approved
 development directories.
 
@@ -24,6 +24,50 @@ Before development work:
 3. Load only the relevant guide. Do not load all guides by default.
 4. Use only tools relevant to the current task.
 5. Never invent unavailable tools or unverified results.
+
+## Mandatory Progress Log
+
+Every agent MUST maintain a `progress.md` file in the root of the specific
+project/workspace it is working on. Do not automatically use the Auvrynt
+repository root when the requested project is a subdirectory.
+
+Strict rules:
+
+1. First identify the requested project/workspace directory. Check whether
+   `<project-directory>\progress.md` exists. If it does not exist, create it
+   there before making any other edit, then append a timestamped start entry.
+2. Before every mutating action, append an intent entry. After the action
+   completes or fails, append a result entry. This protects the audit trail if
+   a command fails or the agent is interrupted.
+3. Log every file edit, creation, deletion, build, test, commit, install,
+   restart, publish attempt, or other repository/system-changing action.
+4. Every entry MUST include the local ISO-8601 timestamp, the agent identity,
+   the action, the exact files or command affected, the reason, and the result
+   or blocker.
+5. `progress.md` is append-only. Never rewrite, truncate, reorder, or delete
+   previous entries, even if they are incorrect or belong to another agent.
+   Appending the required log entry to `progress.md` itself is the only
+   exception and does not require a second recursive entry.
+6. Record failed commands, partial changes, and external side effects; do not
+   log only successful work.
+7. If a task spans multiple projects, use a separate `progress.md` in each
+   affected project directory and log each project's changes there.
+8. Serialize concurrent appends: reread the file immediately before writing,
+   append to the latest content, and never overwrite another agent's entry.
+9. Do not put passwords, access tokens, OAuth tokens, or other secrets in the
+   log. Redact them as `[REDACTED]`.
+10. Before handing off or finishing, append a final status entry listing the
+    verification performed and any remaining work.
+
+Minimum entry format:
+
+```text
+## 2026-08-01T00:00:00+08:00 — Agent
+- Action: Updated `src/example.ts`
+- Files: `src/example.ts`
+- Reason: Implemented the requested behavior.
+- Result: Typecheck passed. Remaining: none.
+```
 
 ## Troubleshooting
 

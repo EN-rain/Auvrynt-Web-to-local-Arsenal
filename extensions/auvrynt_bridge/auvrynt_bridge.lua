@@ -68,7 +68,14 @@ local function color_table(color)
 end
 
 local function color_from_request(value, fallback)
-  if type(value) ~= "table" then return fallback or Color() end
+  -- NOTE: this JSON decoder represents decoded objects as either "table" or
+  -- "userdata" (see is_json_object below, used elsewhere for the same
+  -- reason). The previous type(value) ~= "table" check rejected the
+  -- userdata case, silently discarding every color sent by the MCP client
+  -- and falling back to fully-transparent black (or the untouched current
+  -- foreground), which is why live strokes/pixels/set_colors appeared to
+  -- draw nothing.
+  if not is_json_object(value) then return fallback or Color() end
   return Color{
     r=math.max(0, math.min(255, tonumber(value.r) or 0)),
     g=math.max(0, math.min(255, tonumber(value.g) or 0)),
