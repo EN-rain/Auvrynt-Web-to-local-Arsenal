@@ -23,13 +23,13 @@ assert.equal(loadConfig({ ...baseEnv, AUVRYNT_TOOL_MODE: "minimal" }).minimalToo
 assert.equal(loadConfig({ ...baseEnv, AUVRYNT_TOOL_MODE: "full" }).minimalTools, false);
 assert.equal(loadConfig({ ...baseEnv, AUVRYNT_MINIMAL_TOOLS: "0" }).minimalTools, false);
 assert.equal(loadConfig({ ...baseEnv, AUVRYNT_MINIMAL_TOOLS: "1" }).minimalTools, true);
-assert.equal(loadConfig(baseEnv).maxSessions, 999);
-assert.equal(loadConfig(baseEnv).maxSessionsPerClient, 999);
-assert.equal(loadConfig({ ...baseEnv, AUVRYNT_MAX_SESSIONS: "3" }).maxSessions, 3);
-assert.equal(loadConfig({ ...baseEnv, AUVRYNT_MAX_SESSIONS_PER_CLIENT: "2" }).maxSessionsPerClient, 2);
+assert.equal(loadConfig(baseEnv).maxSessions, 99999);
+assert.equal(loadConfig(baseEnv).maxSessionsPerClient, 99999);
+assert.equal(loadConfig({ ...baseEnv, AUVRYNT_MAX_SESSIONS: "10" }).maxSessions, 10);
+assert.equal(loadConfig({ ...baseEnv, AUVRYNT_MAX_SESSIONS_PER_CLIENT: "5" }).maxSessionsPerClient, 5);
 assert.throws(
-  () => loadConfig({ ...baseEnv, AUVRYNT_MAX_SESSIONS: "1000" }),
-  /Maximum is 999/,
+  () => loadConfig({ ...baseEnv, AUVRYNT_MAX_SESSIONS: "100000" }),
+  /Maximum is 99999/,
 );
 assert.throws(
   () => loadConfig({ ...baseEnv, AUVRYNT_MAX_SESSIONS_PER_CLIENT: "0" }),
@@ -39,8 +39,9 @@ assert.equal(loadConfig(baseEnv).skillsEnabled, true);
 assert.equal(loadConfig({ ...baseEnv, AUVRYNT_SKILLS: "0" }).skillsEnabled, false);
 assert.equal(loadConfig({ ...baseEnv, AUVRYNT_SKILLS: "1" }).skillsEnabled, true);
 assert.equal(loadConfig(baseEnv).serena.enabled, false);
-assert.equal(loadConfig(baseEnv).integrations.aseprite, true);
+assert.equal(loadConfig(baseEnv).integrations.aseprite, false);
 assert.equal(loadConfig(baseEnv).sessionIdleTimeoutMs, 12 * 60 * 60 * 1000);
+assert.equal(loadConfig({ ...baseEnv, AUVRYNT_CLOUDFLARE_TUNNEL_TOKEN: "t".repeat(16) }).cloudflareTunnelToken, "t".repeat(16));
 assert.equal(loadConfig({ ...baseEnv, AUVRYNT_SESSION_IDLE_MS: String(60 * 60 * 1000) }).sessionIdleTimeoutMs, 60 * 60 * 1000);
 assert.throws(
   () => loadConfig({ ...baseEnv, AUVRYNT_SESSION_IDLE_MS: "59999" }),
@@ -127,9 +128,14 @@ assert.deepEqual(loadConfig(baseEnv).oauth.scopes, [
 assert.deepEqual(loadConfig(baseEnv).oauth.allowedRedirectHosts, [
   "grok.com",
   "console.x.ai",
+  "x.ai",
   "chatgpt.com",
+  "openai.com",
   "claude.ai",
   "claude.com",
+  "claude.site",
+  "useclaude.ai",
+  "anthropic.com",
   "oauth.lovable.app",
   "lovable.app",
   "lovable.dev",

@@ -20,6 +20,13 @@ assert.deepEqual(parseStartRequest(["model", "--replace"]), {
   replace: true,
   backgroundChild: false,
 });
+assert.deepEqual(parseStartRequest([]), {
+  profiles: [],
+  replace: false,
+  backgroundChild: false,
+});
+assert.deepEqual(parseStartRequest(["--no-integrations", "--background-child"]).profiles, []);
+assert.throws(() => parseStartRequest(["model", "--no-integrations"]), /Do not combine/);
 assert.throws(() => parseIntegrationProfiles(["unknown"]), /Unknown start profile/);
 assert.throws(() => parseStartRequest(["--unknown"]), /Unknown start option/);
 

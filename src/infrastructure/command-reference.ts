@@ -5,7 +5,7 @@ export interface AuvryntCommandReference {
 
 export const AUVRYNT_COMMANDS: readonly AuvryntCommandReference[] = [
   { command: "auvrynt", description: "Run first-time setup if needed, then start the server." },
-  { command: "auvrynt start", description: "Start enabled integrations in the background for this directory." },
+  { command: "auvrynt start", description: "Start Auvrynt with all integrations disabled by default." },
   { command: "auvrynt start model", description: "Start Blender MCP detection only." },
   { command: "auvrynt start web", description: "Start Playwright/browser tools only." },
   { command: "auvrynt start godotcs", description: "Start Godot C# only." },
@@ -15,8 +15,8 @@ export const AUVRYNT_COMMANDS: readonly AuvryntCommandReference[] = [
   { command: "auvrynt start ... --replace", description: "Replace active profiles or change the managed workspace." },
   { command: "auvrynt add web", description: "Add profiles live without restarting the server or tunnel." },
   { command: "auvrynt change", description: "Switch the running workspace to the current directory." },
-  { command: "auvrynt stop", description: "Stop Auvrynt and its managed tunnel." },
-  { command: "auvrynt tunnel", description: "Switch the managed tunnel provider between Cloudflare and ngrok." },
+  { command: "auvrynt stop", description: "Stop Auvrynt and, on Windows custom mode, the cloudflared service." },
+  { command: "auvrynt tunnel", description: "Switch between Cloudflare, ngrok, or a custom Cloudflare Named Tunnel." },
   { command: "auvrynt restart [combo]", description: "Restart only Auvrynt while keeping the current tunnel URL." },
   { command: "auvrynt restart hard", description: "Stop and start Auvrynt plus its managed tunnel." },
   { command: "auvrynt serve", description: "Start the server in the foreground with verbose console logs." },

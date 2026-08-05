@@ -37,6 +37,7 @@ import {
   tunnelProviderLabel,
   type ManagedTunnelOptions,
 } from "../tunnels/tunnel-manager.js";
+import { startCloudflaredService, stopCloudflaredService } from "../tunnels/cloudflared-service.js";
 
 export interface ActiveInstance {
   stateDir: string;
@@ -71,6 +72,8 @@ function managedTunnelOptions(
     provider,
     ngrokAuthtoken: config.ngrokAuthtoken,
     ngrokUrl: config.ngrokUrl,
+    cloudflareTunnelToken: config.cloudflareTunnelToken,
+    publicUrl: config.publicBaseUrl,
   };
 }
 
@@ -218,8 +221,7 @@ export function createLifecycleManager(selfHealStartIntegrations: IntegrationBoo
     if (config.executables.godot && !process.env.GODOT_EXECUTABLE) {
       process.env.GODOT_EXECUTABLE = config.executables.godot;
     }
-    const saved = completeIntegrationsConfig(loadAuvryntFiles().config.integrations);
-    const profiles = request.profiles ?? INTEGRATION_KEYS.filter((key) => saved[key]);
+    const profiles = request.profiles ?? [];
     if (active) {
       let replace = request.replace;
       if (!replace && stdin.isTTY && stdout.isTTY) {
@@ -250,11 +252,11 @@ export function createLifecycleManager(selfHealStartIntegrations: IntegrationBoo
     await mkdir(config.stateDir, { recursive: true, mode: 0o700 });
     await selfHealStartIntegrations(launchRoot, config.executables, integrationsForProfiles(profiles));
     const tunnelOptions = managedTunnelOptions(config.stateDir, config.port, config.tunnelProvider, config);
-    const tunnelResult = config.tunnelProvider === "custom"
-      ? undefined
-      : await ensureManagedTunnel(tunnelOptions);
+    const managesCustomTunnel = config.tunnelProvider !== "custom"
+      || (Boolean(config.cloudflareTunnelToken) && process.platform !== "win32");
+    const tunnelResult = managesCustomTunnel ? await ensureManagedTunnel(tunnelOptions) : undefined;
     const publicBaseUrl = tunnelResult?.record.url ?? config.publicBaseUrl;
-    if (config.tunnelProvider === "custom") {
+    if (config.tunnelProvider === "custom" && !managesCustomTunnel) {
       await stopManagedTunnel(tunnelOptions);
     } else if (config.publicBaseUrl !== publicBaseUrl) {
       const files = loadAuvryntFiles();
@@ -265,6 +267,7 @@ export function createLifecycleManager(selfHealStartIntegrations: IntegrationBoo
     const logHandle = openSync(logPath, "a", 0o600);
     const childArgs = [process.argv[1], "start", "--background-child"];
     if (profiles.length > 0) childArgs.push(profiles.join(","));
+    else childArgs.push("--no-integrations");
     const controlToken = randomBytes(32).toString("base64url");
     const child = spawn(process.execPath, childArgs, {
       cwd: launchRoot,
@@ -306,8 +309,14 @@ export function createLifecycleManager(selfHealStartIntegrations: IntegrationBoo
   async function start(request: StartRequest, launchRoot = resolve(process.cwd())): Promise<void> {
     const config = loadConfig();
     const management = await acquireManagementLock(config.stateDir);
+    const useCloudflaredService = process.platform === "win32" && config.tunnelProvider === "custom";
+    let serviceStarted = false;
     try {
+      if (useCloudflaredService) serviceStarted = await startCloudflaredService();
       await runBackgroundStartUnlocked(request, launchRoot);
+    } catch (error) {
+      if (serviceStarted) await stopCloudflaredService().catch(() => undefined);
+      throw error;
     } finally {
       await management.release();
     }
@@ -360,6 +369,7 @@ export function createLifecycleManager(selfHealStartIntegrations: IntegrationBoo
     let tunnelStopped = false;
     let serverError: unknown;
     let tunnelError: unknown;
+    let serviceError: unknown;
     try {
       active = await readActiveInstance();
       try {
@@ -372,13 +382,20 @@ export function createLifecycleManager(selfHealStartIntegrations: IntegrationBoo
         } catch (error) {
           tunnelError = error;
         }
+        if (process.platform === "win32" && config.tunnelProvider === "custom") {
+          try {
+            await stopCloudflaredService();
+          } catch (error) {
+            serviceError = error;
+          }
+        }
       }
     } finally {
       await management.release();
     }
-    if (serverError || tunnelError) {
+    if (serverError || tunnelError || serviceError) {
       throw new AggregateError(
-        [serverError, tunnelError].filter((error): error is object => Boolean(error)),
+        [serverError, tunnelError, serviceError].filter((error): error is object => Boolean(error)),
         "Auvrynt could not stop all managed processes.",
       );
     }

@@ -17,7 +17,7 @@ const loggingConfig = {
   shellCommands: false,
 };
 const config = { logging: loggingConfig };
-assert.equal(HARD_MAX_SESSIONS, 999, "the MCP server must never allow more than 999 sessions");
+assert.equal(HARD_MAX_SESSIONS, 99999, "the MCP server must never allow more than 99999 sessions");
 assert.equal(DEFAULT_SESSION_IDLE_TIMEOUT_MS, 12 * 60 * 60 * 1000, "idle sessions should remain available for 12 hours");
 assert.equal(DEFAULT_DISCONNECT_GRACE_MS, 0, "idle cleanup should not add a grace period");
 

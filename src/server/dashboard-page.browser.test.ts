@@ -23,7 +23,7 @@ const view: DashboardView = {
   tunnelProvider: "custom",
   allowedRoots: ["C:\\Users\\LENOVO\\Desktop\\Projectsss\\Moonless"],
   sessions: 1,
-  maxSessions: 999,
+  maxSessions: 99999,
   sessionIdleTimeoutMinutes: 720,
   runningProcesses: 2,
   workspaceChanges: {
@@ -252,7 +252,7 @@ try {
     assert.equal(await page.locator("#connection-title").isVisible(), true);
     assert.equal(await page.locator("#integrations-title").isVisible(), true);
     assert.equal(await page.locator("#workspace-editor").count(), 0);
-    assert.equal(await page.locator("#session-limit-input").inputValue(), "999");
+    assert.equal(await page.locator("#session-limit-input").inputValue(), "99999");
     assert.equal(await page.locator("#session-limit-input").getAttribute("type"), "text");
     assert.equal(await page.locator("#session-limit-input").evaluate((element: HTMLElement) => getComputedStyle(element).borderTopWidth), "0px");
     assert.equal(await page.locator("#save-session-limit svg").count(), 1);

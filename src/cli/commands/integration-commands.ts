@@ -10,12 +10,12 @@ export function completeIntegrationsConfig(
   config: AuvryntIntegrationsConfig | undefined,
 ): Record<IntegrationKey, boolean> {
   return {
-    godotGdscript: config?.godotGdscript ?? true,
-    godotCsharp: config?.godotCsharp ?? true,
-    blender: config?.blender ?? true,
-    aseprite: config?.aseprite ?? true,
-    serena: config?.serena ?? true,
-    playwright: config?.playwright ?? true,
+    godotGdscript: config?.godotGdscript ?? false,
+    godotCsharp: config?.godotCsharp ?? false,
+    blender: config?.blender ?? false,
+    aseprite: config?.aseprite ?? false,
+    serena: config?.serena ?? false,
+    playwright: config?.playwright ?? false,
   };
 }
 
@@ -33,7 +33,7 @@ export async function ensureIntegrationChoicesConfigured(): Promise<void> {
   for (const key of INTEGRATION_KEYS) {
     const answer = await prompts.confirm({
       message: `Enable ${INTEGRATION_LABELS[key]}?`,
-      initialValue: true,
+      initialValue: false,
     });
     if (prompts.isCancel(answer)) {
       prompts.cancel("Integration setup cancelled.");

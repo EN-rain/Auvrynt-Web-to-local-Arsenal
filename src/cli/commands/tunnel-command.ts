@@ -2,7 +2,7 @@ import * as prompts from "@clack/prompts";
 import { resolve } from "node:path";
 import type { InstanceLockRecord, StartRequest, TunnelProvider } from "../../background-lifecycle.js";
 import { normalizeNgrokUrl, tunnelProviderLabel } from "../../tunnels/tunnel-utils.js";
-import { loadAuvryntFiles, writeAuvryntConfig, type AuvryntUserConfig } from "../../user-config.js";
+import { loadAuvryntFiles, writeAuvryntAuth, writeAuvryntConfig, type AuvryntUserConfig } from "../../user-config.js";
 
 export interface ActiveInstance {
   stateDir: string;
@@ -39,6 +39,21 @@ export async function runTunnelCommand(dependencies: TunnelCommandDependencies):
   let publicBaseUrl = files.config.publicBaseUrl;
   let ngrokAuthtoken = files.config.ngrokAuthtoken;
   let ngrokUrl = files.config.ngrokUrl;
+  let cloudflareTunnelToken = files.auth.cloudflareTunnelToken;
+
+  if (provider === "custom") {
+    const answer = await prompts.text({
+      message: "Cloudflare Named Tunnel token (leave blank to manage the tunnel externally)",
+      placeholder: "paste the tunnel token from Cloudflare, or press Enter to skip",
+      initialValue: "",
+    });
+    if (prompts.isCancel(answer)) {
+      prompts.cancel("Tunnel setup cancelled.");
+      return;
+    }
+    const trimmed = String(answer).trim();
+    if (trimmed) cloudflareTunnelToken = trimmed;
+  }
 
   if (provider === "ngrok" && !ngrokAuthtoken && !process.env.AUVRYNT_NGROK_AUTHTOKEN) {
     const answer = await prompts.text({
@@ -103,6 +118,7 @@ export async function runTunnelCommand(dependencies: TunnelCommandDependencies):
   if (ngrokUrl) nextConfig.ngrokUrl = ngrokUrl;
   else delete nextConfig.ngrokUrl;
   writeAuvryntConfig(nextConfig);
+  writeAuvryntAuth({ ...files.auth, ...(cloudflareTunnelToken ? { cloudflareTunnelToken } : {}) });
 
   prompts.note(`Tunnel provider set to ${tunnelProviderLabel(provider)}.`, "Saved to ~/.auvrynt/config.json");
 

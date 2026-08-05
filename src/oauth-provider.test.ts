@@ -42,7 +42,7 @@ const capacityStore = new InMemoryOAuthClientsStore(
   (clientId) => clientId === protectedClientId,
 );
 const capacityClientIds: string[] = [];
-for (let index = 0; index < 128; index++) {
+for (let index = 0; index < 1024; index++) {
   capacityClientIds.push(
     capacityStore.registerClient(client(`https://example.com/callback/${index}`) as any).client_id,
   );
@@ -52,7 +52,7 @@ const replacementClient = capacityStore.registerClient(client("https://example.c
 assert.ok(capacityStore.getClient(protectedClientId));
 assert.equal(capacityStore.getClient(capacityClientIds[1]), undefined);
 assert.ok(capacityStore.getClient(replacementClient.client_id));
-assert.equal(capacityStore.allClients().length, 128);
+assert.equal(capacityStore.allClients().length, 1024);
 
 const stateDir = await mkdtemp(join(tmpdir(), "auvrynt-oauth-"));
 try {

@@ -71,6 +71,17 @@ The managed tunnel URL stays unchanged across `auvrynt add`, same-directory `auv
 
 Auvrynt reads ngrok's structured startup logs for the URL created by the exact child process it launched. It does not query the shared `127.0.0.1:4040` inspector API, which avoids accidentally adopting a different local ngrok process when multiple agents are running.
 
+## Custom Cloudflare Named Tunnel Is Down
+
+For a stable custom domain, choose **Custom external URL** in `auvrynt tunnel`.
+On Windows, Auvrynt controls the existing `cloudflared` service: `auvrynt start`
+runs `sc.exe start cloudflared` and `auvrynt stop` runs `sc.exe stop cloudflared`.
+`auvrynt restart` and `auvrynt restart hard` intentionally do not touch the
+service. The Cloudflare public hostname must route to
+`http://127.0.0.1:49321` (or the configured Auvrynt port). If the service is
+not installed, Auvrynt reports that clearly instead of silently starting a
+second connector.
+
 If the public tunnel temporarily becomes unreachable while the local server is healthy, Auvrynt leaves the existing tunnel process in place so it can reconnect with the same URL. It does not silently replace the tunnel because a replacement assigned URL would no longer match the running OAuth issuer and resource configuration. Use `auvrynt restart hard` only when you intentionally accept replacement behavior or have configured a stable ngrok origin.
 
 Managed background starts also schedule bounded crash recovery for fatal Node.js errors. The replacement server waits for the failed process to exit, reuses the same managed tunnel URL and profile arguments, and stops after five restart attempts in ten minutes to prevent a crash loop.
@@ -131,6 +142,7 @@ console.x.ai
 chatgpt.com
 claude.ai
 claude.com
+anthropic.com
 oauth.lovable.app
 lovable.app
 lovable.dev

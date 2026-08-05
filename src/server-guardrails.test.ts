@@ -78,7 +78,7 @@ try {
   running.updateSessionLimit(3);
   assert.equal(running.config.maxSessions, 3);
   assert.equal(running.config.maxSessionsPerClient, 3);
-  running.updateSessionLimit(999);
+  running.updateSessionLimit(99999);
   const rootUpdate = running.updateWorkspaceRoots([stateDir]);
   assert.equal(rootUpdate.updated, true);
   assert.deepEqual(running.config.allowedRoots, [stateDir]);
@@ -161,7 +161,7 @@ try {
     const localDashboardData = await fetch(`http://127.0.0.1:${port}/dashboard/data`);
     const localDashboardBody = await localDashboardData.json() as Record<string, unknown>;
     assert.equal(localDashboardData.status, 200);
-    assert.equal(localDashboardBody.maxSessions, 999);
+    assert.equal(localDashboardBody.maxSessions, 99999);
     assert.equal(localDashboardBody.agentState, "waiting");
     assert.equal(localDashboardBody.activeToolCalls, 0);
     assert.ok(localDashboardBody.workspaceChanges && typeof localDashboardBody.workspaceChanges === "object");
@@ -177,7 +177,7 @@ try {
     });
     assert.equal(publicDashboardData.status, 404);
 
-    for (let attempt = 0; attempt < 10; attempt++) {
+    for (let attempt = 0; attempt < 600; attempt++) {
       const registrationAttempt = await fetch(`http://127.0.0.1:${port}/register`, {
         method: "POST",
         headers: {

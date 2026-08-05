@@ -65,6 +65,7 @@ export interface AuvryntUserConfig {
 
 export interface AuvryntAuthConfig {
   ownerToken?: string;
+  cloudflareTunnelToken?: string;
   ngrokAuthtokens?: string[];
   ngrokActiveAuthtokenIndex?: number;
   ngrokQuotaExhausted?: Record<string, string>;
@@ -116,8 +117,8 @@ const userConfigSchema: z.ZodType<AuvryntUserConfig> = z.object({
   allowedRoots: z.array(z.string()).optional(),
   publicBaseUrl: z.string().nullable().optional(),
   allowedHosts: z.array(z.string()).optional(),
-  maxSessions: z.number().int().min(1).max(999).optional(),
-  maxSessionsPerClient: z.number().int().min(1).max(999).optional(),
+  maxSessions: z.number().int().min(1).max(99999).optional(),
+  maxSessionsPerClient: z.number().int().min(1).max(99999).optional(),
   sessionIdleTimeoutMs: z.number().int().min(60_000).max(7 * 24 * 60 * 60 * 1000).optional(),
   stateDir: z.string().optional(),
   worktreeRoot: z.string().optional(),
@@ -132,6 +133,7 @@ const userConfigSchema: z.ZodType<AuvryntUserConfig> = z.object({
 
 const authConfigSchema: z.ZodType<AuvryntAuthConfig> = z.object({
   ownerToken: z.string().optional(),
+  cloudflareTunnelToken: z.string().min(16).max(2048).optional(),
   ngrokAuthtokens: z.array(z.string().min(16).max(512)).max(20).optional(),
   ngrokActiveAuthtokenIndex: z.number().int().min(0).optional(),
   ngrokQuotaExhausted: z.record(z.string(), z.string()).optional(),

@@ -31,7 +31,9 @@ export async function startTunnel(
   port: number,
   options: TunnelStartOptions = {},
 ): Promise<TunnelProcess> {
-  if (provider === "custom") throw new Error("Custom external URLs are managed outside Auvrynt.");
+  if (provider === "custom" && !options.cloudflareTunnelToken) {
+    throw new Error("Custom external URLs are managed outside Auvrynt. Configure a Cloudflare tunnel token to manage it with Auvrynt.");
+  }
   if (provider === "ngrok") {
     return startNgrokTunnel(port, {
       detached: options.detached,
@@ -40,11 +42,15 @@ export async function startTunnel(
       url: options.ngrokUrl,
     });
   }
-  return startCloudflareTunnel(port, { detached: options.detached, logPath: options.logPath });
+  return startCloudflareTunnel(port, {
+    detached: options.detached,
+    logPath: options.logPath,
+    cloudflareTunnelToken: options.cloudflareTunnelToken,
+    publicUrl: options.publicUrl,
+  });
 }
 
 export async function readManagedTunnel(options: ManagedTunnelOptions): Promise<ManagedTunnelRecord | undefined> {
-  if (options.provider === "custom") return undefined;
   const tunnelPath = managedTunnelPath(options.stateDir);
   const record = await readJsonFile<ManagedTunnelRecord>(tunnelPath);
   if (!record || !Number.isInteger(record.pid) || record.pid < 1) return undefined;
@@ -70,7 +76,9 @@ export async function readManagedTunnel(options: ManagedTunnelOptions): Promise<
 }
 
 export async function ensureManagedTunnel(options: ManagedTunnelOptions): Promise<ManagedTunnelResult> {
-  if (options.provider === "custom") throw new Error("Custom external URLs do not create a managed tunnel.");
+  if (options.provider === "custom" && !options.cloudflareTunnelToken) {
+    throw new Error("A Cloudflare tunnel token is required to manage a custom domain from Auvrynt.");
+  }
   const existing = await readManagedTunnel(options);
   if (existing) {
     cleanupOrphanedTunnelProcesses(options, existing.pid);
@@ -84,6 +92,8 @@ export async function ensureManagedTunnel(options: ManagedTunnelOptions): Promis
     logPath: join(options.stateDir, logFileName),
     ngrokAuthtoken: options.ngrokAuthtoken,
     ngrokUrl: options.ngrokUrl,
+    cloudflareTunnelToken: options.cloudflareTunnelToken,
+    publicUrl: options.publicUrl,
   });
   if (!tunnel.process.pid) throw new Error(`${tunnelProviderLabel(options.provider)} tunnel started without a process ID.`);
   const identity = getProcessIdentity(tunnel.process.pid);

@@ -57,10 +57,10 @@ interface PersistedOAuthState {
 }
 
 const CODE_TTL_MS = 5 * 60 * 1000;
-const MAX_DYNAMIC_CLIENTS = 128;
-const MAX_AUTHORIZATION_CODES = 256;
-const MAX_ACCESS_TOKENS = 2048;
-const MAX_REFRESH_TOKENS = 2048;
+const MAX_DYNAMIC_CLIENTS = 1024;
+const MAX_AUTHORIZATION_CODES = 1024;
+const MAX_ACCESS_TOKENS = 4096;
+const MAX_REFRESH_TOKENS = 4096;
 
 function randomToken(): string {
   return randomBytes(32).toString("base64url");
@@ -242,7 +242,12 @@ function redirectHostAllowed(redirectUri: string, allowedHosts: string[]): boole
   const hostname = parsed.hostname.toLowerCase();
   const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(hostname);
   if (loopback) return parsed.protocol === "http:" || parsed.protocol === "https:";
-  return parsed.protocol === "https:" && allowedHosts.some((host) => host.toLowerCase() === hostname);
+  if (parsed.protocol !== "https:") return false;
+
+  return allowedHosts.some((allowed) => {
+    const h = allowed.toLowerCase();
+    return h === "*" || hostname === h || hostname.endsWith(`.${h}`);
+  });
 }
 
 function redirectHostDescription(redirectUri: string): string {
@@ -297,6 +302,7 @@ export class InMemoryOAuthClientsStore implements OAuthRegisteredClientsStore {
     initialClients: OAuthClientInformationFull[] = [],
     private readonly onChange?: () => void,
     private readonly isClientInUse: (clientId: string) => boolean = () => false,
+    private readonly onEvictClient?: (clientId: string) => void,
   ) {
     for (const client of initialClients) {
       if (client.client_id) this.clients.set(client.client_id, client);
@@ -344,9 +350,15 @@ export class InMemoryOAuthClientsStore implements OAuthRegisteredClientsStore {
     const candidates = [...this.clients.values()].sort(
       (left, right) => (left.client_id_issued_at ?? 0) - (right.client_id_issued_at ?? 0),
     );
-    const candidate = candidates.find((registered) => !this.isClientInUse(registered.client_id));
-    if (!candidate) return false;
-    return this.clients.delete(candidate.client_id);
+    const inactive = candidates.find((registered) => !this.isClientInUse(registered.client_id));
+    if (inactive) {
+      this.onEvictClient?.(inactive.client_id);
+      return this.clients.delete(inactive.client_id);
+    }
+    const oldest = candidates[0];
+    if (!oldest) return false;
+    this.onEvictClient?.(oldest.client_id);
+    return this.clients.delete(oldest.client_id);
   }
 }
 
@@ -371,6 +383,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
       persisted?.clients,
       () => this.persistState(),
       (clientId) => this.clientHasActiveGrant(clientId),
+      (clientId) => this.revokeClientGrants(clientId),
     );
     for (const [code, record] of persisted?.codes ?? []) {
       this.codes.set(code, {
@@ -580,6 +593,18 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
       throw new InvalidGrantError("Invalid authorization code");
     }
     return record;
+  }
+
+  private revokeClientGrants(clientId: string): void {
+    for (const [code, record] of this.codes) {
+      if (record.clientId === clientId) this.codes.delete(code);
+    }
+    for (const [hash, record] of this.accessTokens) {
+      if (record.clientId === clientId) this.accessTokens.delete(hash);
+    }
+    for (const [hash, record] of this.refreshTokens) {
+      if (record.clientId === clientId) this.refreshTokens.delete(hash);
+    }
   }
 
   private clientHasActiveGrant(clientId: string): boolean {

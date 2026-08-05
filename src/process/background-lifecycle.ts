@@ -88,10 +88,12 @@ export function parseIntegrationProfiles(args: string[]): IntegrationKey[] {
 export function parseStartRequest(args: string[]): StartRequest {
   const backgroundChild = args.includes("--background-child");
   const replace = args.includes("--replace");
-  const profiles = args.filter((arg) => arg !== "--background-child" && arg !== "--replace");
+  const noIntegrations = args.includes("--no-integrations");
+  const profiles = args.filter((arg) => arg !== "--background-child" && arg !== "--replace" && arg !== "--no-integrations");
+  if (noIntegrations && profiles.length > 0) throw new Error("Do not combine --no-integrations with start profiles.");
   const unknownOption = profiles.find((arg) => arg.startsWith("--"));
   if (unknownOption) throw new Error(`Unknown start option: ${unknownOption}`);
-  return { profiles: profiles.length > 0 ? parseIntegrationProfiles(profiles) : undefined, replace, backgroundChild };
+  return { profiles: noIntegrations ? [] : profiles.length > 0 ? parseIntegrationProfiles(profiles) : [], replace, backgroundChild };
 }
 
 export function isProcessRunning(pid: number): boolean {

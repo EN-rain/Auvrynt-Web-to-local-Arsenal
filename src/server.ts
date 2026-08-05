@@ -96,11 +96,8 @@ export interface RunningServer {
   close(): Promise<void>;
 }
 export function createServer(config = loadConfig()): RunningServer {
-  const allowedHosts = config.allowedHosts.includes("*") ? undefined : Array.from(new Set([config.host, ...config.allowedHosts]));
-  const app = createMcpExpressApp({
-    host: config.host,
-    ...(allowedHosts ? { allowedHosts } : {}),
-  });
+  const allowedHosts = config.allowedHosts.includes("*") ? ["*"] : Array.from(new Set([config.host, ...config.allowedHosts]));
+  const app = createMcpExpressApp({ host: config.host, allowedHosts });
   const sessionRegistry = new SessionRegistry(config, { maxSessions: config.maxSessions, maxSessionsPerOwner: config.maxSessionsPerClient, sessionIdleTimeoutMs: config.sessionIdleTimeoutMs });
   const mcpUrl = new URL("/mcp", config.publicBaseUrl);
   const resourceServerUrl = resourceUrlFromServerUrl(mcpUrl);
@@ -140,7 +137,7 @@ export function createServer(config = loadConfig()): RunningServer {
   let activeToolCalls = 0;
   let lastMcpActivityAt: number | undefined;
   let acceptingRequests = true;
-  app.set("trust proxy", "loopback");
+  app.set("trust proxy", true);
   app.disable("x-powered-by");
   app.use(express.json({ limit: "4mb" }));
   app.use((req, res, next) => {
@@ -171,6 +168,7 @@ export function createServer(config = loadConfig()): RunningServer {
     next();
   });
   registerOAuthRateLimits(app);
+  app.use("/.well-known/openid-configuration", (req, _res, next) => { req.url = "/.well-known/oauth-authorization-server"; next(); });
   app.use(
     mcpAuthRouter({
       provider: oauthProvider,
@@ -179,6 +177,8 @@ export function createServer(config = loadConfig()): RunningServer {
       resourceServerUrl,
       scopesSupported: config.oauth.scopes,
       resourceName: "Auvrynt",
+      // Auvrynt applies its own rate limit above; disable SDK's duplicate limiter.
+      clientRegistrationOptions: { rateLimit: false },
     }),
   );
   registerStaticAssets(app);
@@ -203,7 +203,6 @@ export function createServer(config = loadConfig()): RunningServer {
     const view = await createDashboardView(config, dashboardSnapshot());
     res.type("html").send(dashboardHtml(view, nonce));
   });
-
   app.get("/tool-card-preview", (req, res) => {
     if (!isLoopbackRequest(req)) {
       res.status(404).end();
@@ -678,7 +677,6 @@ export function createServer(config = loadConfig()): RunningServer {
     },
   };
 }
-
 function registerOAuthRateLimits(
   app: ReturnType<typeof createMcpExpressApp>,
 ): void {
@@ -689,21 +687,20 @@ function registerOAuthRateLimits(
   }));
   app.post("/register", createFixedWindowRateLimiter({
     windowMs: 60 * 60_000,
-    maxRequests: 10,
+    maxRequests: 600,
     message: "Too many OAuth client registrations. Try again later.",
   }));
   app.post("/token", createFixedWindowRateLimiter({
     windowMs: 5 * 60_000,
-    maxRequests: 60,
+    maxRequests: 600,
     message: "Too many token requests. Try again later.",
   }));
   app.post("/revoke", createFixedWindowRateLimiter({
     windowMs: 5 * 60_000,
-    maxRequests: 60,
+    maxRequests: 600,
     message: "Too many token revocation requests. Try again later.",
   }));
 }
-
 function registerStaticAssets(
   app: ReturnType<typeof createMcpExpressApp>,
 ): void {

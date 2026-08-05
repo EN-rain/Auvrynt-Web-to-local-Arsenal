@@ -60,8 +60,8 @@ assert.throws(
   /port: Too big|port:.*65535/i,
 );
 
-writeFileSync(loaded.configPath, JSON.stringify({ maxSessions: 1000 }));
+writeFileSync(loaded.configPath, JSON.stringify({ maxSessions: 100000 }));
 assert.throws(
   () => loadAuvryntFiles(env),
-  /maxSessions: Too big|maxSessions:.*999/i,
+  /maxSessions: Too big|maxSessions:.*99999/i,
 );

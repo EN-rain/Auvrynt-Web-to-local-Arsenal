@@ -11,7 +11,6 @@ import { selfHealStartIntegrations } from "../integration-bootstrap.js";
 import { acquireInstanceLock } from "../instance-lock.js";
 import { serveForegroundServer } from "../foreground-server.js";
 import { ensureConfigured } from "./init-command.js";
-import { ensureIntegrationChoicesConfigured } from "./integration-commands.js";
 
 export async function runServeCommand(
   rawCommand: string | undefined,
@@ -22,16 +21,12 @@ export async function runServeCommand(
   if (startRequest && !startRequest.backgroundChild) {
     const launchRoot = setDirectoryScopedRoot();
     await ensureConfigured({ directoryScoped: true });
-    if (!startRequest.profiles) await ensureIntegrationChoicesConfigured();
     await lifecycle.start(startRequest, launchRoot);
     return;
   }
 
   if (rawCommand === "start") setDirectoryScopedRoot();
   await ensureConfigured({ directoryScoped: rawCommand === "start" });
-  if (rawCommand === "start" && !startRequest?.profiles) {
-    await ensureIntegrationChoicesConfigured();
-  }
   if (startRequest?.profiles) applyIntegrationProfile(startRequest.profiles);
 
   const localConfig = loadConfig();
@@ -57,7 +52,7 @@ export async function runServeCommand(
         );
       }
       const managedTunnelUrl = process.env.AUVRYNT_MANAGED_TUNNEL_URL;
-      if (localConfig.tunnelProvider === "custom") {
+      if (localConfig.tunnelProvider === "custom" && (process.platform === "win32" || !localConfig.cloudflareTunnelToken)) {
         process.env.AUVRYNT_PUBLIC_BASE_URL = localConfig.publicBaseUrl;
       } else if (managedTunnelUrl) {
         process.env.AUVRYNT_PUBLIC_BASE_URL = managedTunnelUrl;
@@ -65,6 +60,8 @@ export async function runServeCommand(
         tunnel = await startTunnel(localConfig.tunnelProvider, localConfig.port, {
           ngrokAuthtoken: localConfig.ngrokAuthtoken,
           ngrokUrl: localConfig.ngrokUrl,
+          cloudflareTunnelToken: localConfig.cloudflareTunnelToken,
+          publicUrl: localConfig.publicBaseUrl,
         });
         process.env.AUVRYNT_PUBLIC_BASE_URL = tunnel.url;
         stopTunnel = () => {

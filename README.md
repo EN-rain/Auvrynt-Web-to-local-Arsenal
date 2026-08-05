@@ -105,11 +105,11 @@ When using foreground `auvrynt serve`, the terminal shows request activity. Back
 
 ---
 
-`auvrynt start` starts one managed tunnel and one Auvrynt server in the background. Cloudflare is the default; run `auvrynt tunnel` to select ngrok and optionally save a reserved stable HTTPS origin. It does not keep the terminal occupied. The tunnel stays alive while profiles are added or replaced, so its URL remains the same until `auvrynt stop` or the managed tunnel process exits. A second start asks before changing the existing instance; use `--replace` when running non-interactively.
+`auvrynt start` starts one managed tunnel and one Auvrynt server in the background. Cloudflare is the default; run `auvrynt tunnel` to select ngrok or configure a custom Cloudflare Named Tunnel. On Windows, a custom domain uses the installed `cloudflared` service: `auvrynt start` starts it and `auvrynt stop` stops it. `auvrynt restart` and `auvrynt restart hard` leave that service untouched. It does not keep the terminal occupied. The tunnel stays alive while profiles are added or replaced, so its URL remains the same until `auvrynt stop` or the managed tunnel process exits. A second start asks before changing the existing instance; use `--replace` when running non-interactively.
 
 ### Start only what you need
 
-Profiles are session-only: they override saved integration choices for the current background instance without changing your config.
+Profiles are session-only: an explicit profile argument enables only those integrations for the current background instance. An unqualified `auvrynt start` starts with every integration disabled, regardless of saved choices.
 
 ```bash
 # One integration
@@ -183,7 +183,7 @@ Authorization is required again after `auvrynt token reset` or any operation tha
 | `auvrynt start ... --replace` | Live-replace profiles, or switch the managed workspace without changing the tunnel |
 | `auvrynt add <profiles>` | Add profiles live without restarting the server or tunnel |
 | `auvrynt change` | Switch the running workspace to the current directory while preserving profiles and tunnel URL |
-| `auvrynt tunnel` | Select Cloudflare or ngrok and optionally configure a stable ngrok HTTPS origin |
+| `auvrynt tunnel` | Select Cloudflare, ngrok, or a custom Cloudflare Named Tunnel |
 | `auvrynt restart [profiles]` | Restart only Auvrynt while preserving the current managed tunnel URL |
 | `auvrynt restart hard [profiles]` | Stop and recreate both Auvrynt and its managed tunnel |
 | `auvrynt stop` | Stop Auvrynt and its managed tunnel |

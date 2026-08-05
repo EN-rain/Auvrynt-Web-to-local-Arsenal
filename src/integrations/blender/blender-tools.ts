@@ -1247,3 +1247,1617 @@ export async function blenderExportGlb(
   }
 }
 
+// ─── Extended Toolset ───────────────────────────────────────────────────────
+
+// Helper to build the standard enter-edit-mode prologue for mesh edit tools.
+function meshEditPrologue(objectName: string, mode = "EDIT"): string {
+  return (
+    "import bpy, bmesh\n" +
+    `object_name = ${JSON.stringify(objectName)}\n` +
+    "obj = bpy.data.objects.get(object_name)\n" +
+    "if obj is None or obj.type != 'MESH':\n" +
+    "    raise RuntimeError('Object not found or not a mesh: ' + object_name)\n" +
+    "if bpy.ops.object.mode_set.poll():\n" +
+    "    bpy.ops.object.mode_set(mode='OBJECT')\n" +
+    "bpy.context.view_layer.objects.active = obj\n" +
+    "bpy.ops.object.mode_set(mode='EDIT')\n" +
+    "bm = bmesh.from_edit_mesh(obj.data)\n"
+  );
+}
+
+// ─── Primitives ─────────────────────────────────────────────────────────────
+
+async function createPrimitive(
+  registry: WorkspaceRegistry,
+  workspaceId: string,
+  opName: string,
+  args: string,
+  kwargs: string,
+  resultKeys: string,
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(workspaceId);
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `bpy.ops.mesh.${opName}(${args}${args && kwargs ? ", " : ""}${kwargs})\n` +
+      "obj = bpy.context.object\n" +
+      `result = ${resultKeys}\n`,
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`${opName} failed: ${err.message}`);
+  }
+}
+
+export async function blenderCreatePlane(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; name?: string; size?: number; location?: number[] },
+): Promise<ToolResponse> {
+  const size = input.size ?? 2;
+  const loc = input.location ? `(${input.location.map((v) => v ?? 0).join(", ")})` : "(0, 0, 0)";
+  const res = await createPrimitive(registry, input.workspaceId, "primitive_plane_add",
+    `size=${size}`, `location=${loc}`, "{'name': obj.name, 'type': obj.type, 'location': list(obj.location)}");
+  if (input.name && !res.isError) {
+    const client = getBlenderClient(input.workspaceId);
+    try {
+      await client.sendExecute(
+        "import bpy\n" +
+        `obj = bpy.context.object\nobj.name = ${JSON.stringify(input.name)}\n` +
+        "result = {'name': obj.name}\n",
+      );
+    } catch { /* rename best-effort */ }
+  }
+  return res;
+}
+
+export async function blenderCreateCircle(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; name?: string; vertices?: number; radius?: number; fillType?: string; location?: number[] },
+): Promise<ToolResponse> {
+  const vertices = input.vertices ?? 32;
+  const radius = input.radius ?? 1;
+  const fillType = input.fillType ?? "NGON";
+  const loc = input.location ? `(${input.location.map((v) => v ?? 0).join(", ")})` : "(0, 0, 0)";
+  return createPrimitive(registry, input.workspaceId, "primitive_circle_add",
+    `vertices=${vertices}, radius=${radius}`, `fill_type='${fillType}', location=${loc}`,
+    "{'name': obj.name, 'type': obj.type, 'location': list(obj.location)}");
+}
+
+export async function blenderCreateCylinder(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; name?: string; vertices?: number; radius?: number; depth?: number; location?: number[] },
+): Promise<ToolResponse> {
+  const vertices = input.vertices ?? 32;
+  const radius = input.radius ?? 1;
+  const depth = input.depth ?? 2;
+  const loc = input.location ? `(${input.location.map((v) => v ?? 0).join(", ")})` : "(0, 0, 0)";
+  return createPrimitive(registry, input.workspaceId, "primitive_cylinder_add",
+    `vertices=${vertices}, radius=${radius}, depth=${depth}`, `location=${loc}`,
+    "{'name': obj.name, 'type': obj.type, 'location': list(obj.location)}");
+}
+
+export async function blenderCreateCone(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; name?: string; vertices?: number; radius1?: number; radius2?: number; depth?: number; location?: number[] },
+): Promise<ToolResponse> {
+  const vertices = input.vertices ?? 32;
+  const radius1 = input.radius1 ?? 1;
+  const radius2 = input.radius2 ?? 0;
+  const depth = input.depth ?? 2;
+  const loc = input.location ? `(${input.location.map((v) => v ?? 0).join(", ")})` : "(0, 0, 0)";
+  return createPrimitive(registry, input.workspaceId, "primitive_cone_add",
+    `vertices=${vertices}, radius1=${radius1}, radius2=${radius2}, depth=${depth}`, `location=${loc}`,
+    "{'name': obj.name, 'type': obj.type, 'location': list(obj.location)}");
+}
+
+export async function blenderCreateSphere(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; name?: string; segments?: number; ringCount?: number; radius?: number; location?: number[] },
+): Promise<ToolResponse> {
+  const segments = input.segments ?? 32;
+  const ringCount = input.ringCount ?? 16;
+  const radius = input.radius ?? 1;
+  const loc = input.location ? `(${input.location.map((v) => v ?? 0).join(", ")})` : "(0, 0, 0)";
+  return createPrimitive(registry, input.workspaceId, "primitive_uv_sphere_add",
+    `segments=${segments}, ring_count=${ringCount}, radius=${radius}`, `location=${loc}`,
+    "{'name': obj.name, 'type': obj.type, 'location': list(obj.location)}");
+}
+
+export async function blenderCreateIcosphere(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; name?: string; subdivisions?: number; radius?: number; location?: number[] },
+): Promise<ToolResponse> {
+  const subdivisions = input.subdivisions ?? 2;
+  const radius = input.radius ?? 1;
+  const loc = input.location ? `(${input.location.map((v) => v ?? 0).join(", ")})` : "(0, 0, 0)";
+  return createPrimitive(registry, input.workspaceId, "primitive_ico_sphere_add",
+    `subdivisions=${subdivisions}, radius=${radius}`, `location=${loc}`,
+    "{'name': obj.name, 'type': obj.type, 'location': list(obj.location)}");
+}
+
+export async function blenderCreateTorus(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; name?: string; majorRadius?: number; minorRadius?: number; location?: number[] },
+): Promise<ToolResponse> {
+  const majorRadius = input.majorRadius ?? 1;
+  const minorRadius = input.minorRadius ?? 0.25;
+  const loc = input.location ? `(${input.location.map((v) => v ?? 0).join(", ")})` : "(0, 0, 0)";
+  return createPrimitive(registry, input.workspaceId, "primitive_torus_add",
+    `major_radius=${majorRadius}, minor_radius=${minorRadius}`, `location=${loc}`,
+    "{'name': obj.name, 'type': obj.type, 'location': list(obj.location)}");
+}
+
+export async function blenderCreateGrid(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; name?: string; xSegments?: number; ySegments?: number; size?: number; location?: number[] },
+): Promise<ToolResponse> {
+  const xSegments = input.xSegments ?? 10;
+  const ySegments = input.ySegments ?? 10;
+  const size = input.size ?? 2;
+  const loc = input.location ? `(${input.location.map((v) => v ?? 0).join(", ")})` : "(0, 0, 0)";
+  return createPrimitive(registry, input.workspaceId, "primitive_grid_add",
+    `x_subdivisions=${xSegments}, y_subdivisions=${ySegments}, size=${size}`, `location=${loc}`,
+    "{'name': obj.name, 'type': obj.type, 'location': list(obj.location)}");
+}
+
+export async function blenderCreateMonkey(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; name?: string; size?: number; location?: number[] },
+): Promise<ToolResponse> {
+  const size = input.size ?? 2;
+  const loc = input.location ? `(${input.location.map((v) => v ?? 0).join(", ")})` : "(0, 0, 0)";
+  return createPrimitive(registry, input.workspaceId, "primitive_monkey_add",
+    `size=${size}`, `location=${loc}`,
+    "{'name': obj.name, 'type': obj.type, 'location': list(obj.location)}");
+}
+
+export async function blenderCreateCamera(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; name?: string; location?: number[]; rotation?: number[]; lens?: number },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const lens = input.lens ?? 50;
+    const loc = input.location ? `(${input.location.map((v) => v ?? 0).join(", ")})` : "(0, -6, 3)";
+    const rot = input.rotation ? `(${input.rotation.map((v) => v ?? 0).join(", ")})` : "(1.107, 0, 0)";
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `bpy.ops.object.camera_add(location=${loc}, rotation=${rot})\n` +
+      "obj = bpy.context.object\n" +
+      `obj.data.lens = ${lens}\n` +
+      `if ${JSON.stringify(input.name ?? "")}:\n    obj.name = ${JSON.stringify(input.name ?? "")}\n` +
+      "result = {'name': obj.name, 'type': obj.type, 'location': list(obj.location), 'lens': obj.data.lens}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Create camera failed: ${err.message}`);
+  }
+}
+
+export async function blenderCreateLight(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; name?: string; lightType?: string; energy?: number; color?: number[]; location?: number[] },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const lightType = input.lightType ?? "POINT";
+    const energy = input.energy ?? 100;
+    const color = input.color ? `(${input.color.slice(0, 3).map((v) => v ?? 1).join(", ")})` : "(1, 1, 1)";
+    const loc = input.location ? `(${input.location.map((v) => v ?? 0).join(", ")})` : "(4, 4, 6)";
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `bpy.ops.object.light_add(type='${lightType}', location=${loc})\n` +
+      "obj = bpy.context.object\n" +
+      `obj.data.energy = ${energy}\n` +
+      `obj.data.color = ${color}\n` +
+      `if ${JSON.stringify(input.name ?? "")}:\n    obj.name = ${JSON.stringify(input.name ?? "")}\n` +
+      "result = {'name': obj.name, 'type': obj.type, 'light_type': obj.data.type, 'energy': obj.data.energy, 'color': list(obj.data.color), 'location': list(obj.location)}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Create light failed: ${err.message}`);
+  }
+}
+
+export async function blenderCreateEmpty(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; name?: string; emptyType?: string; location?: number[] },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const emptyType = input.emptyType ?? "PLAIN_AXES";
+    const loc = input.location ? `(${input.location.map((v) => v ?? 0).join(", ")})` : "(0, 0, 0)";
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `bpy.ops.object.empty_add(type='${emptyType}', location=${loc})\n` +
+      "obj = bpy.context.object\n" +
+      `if ${JSON.stringify(input.name ?? "")}:\n    obj.name = ${JSON.stringify(input.name ?? "")}\n` +
+      "result = {'name': obj.name, 'type': obj.type, 'location': list(obj.location)}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Create empty failed: ${err.message}`);
+  }
+}
+
+export async function blenderCreateText(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; name?: string; content?: string; size?: number; location?: number[] },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const size = input.size ?? 1;
+    const loc = input.location ? `(${input.location.map((v) => v ?? 0).join(", ")})` : "(0, 0, 0)";
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `bpy.ops.object.text_add(location=${loc})\n` +
+      "obj = bpy.context.object\n" +
+      `obj.data.body = ${JSON.stringify(input.content ?? "Text")}\n` +
+      `obj.data.size = ${size}\n` +
+      `if ${JSON.stringify(input.name ?? "")}:\n    obj.name = ${JSON.stringify(input.name ?? "")}\n` +
+      "result = {'name': obj.name, 'type': obj.type, 'content': obj.data.body, 'location': list(obj.location)}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Create text failed: ${err.message}`);
+  }
+}
+
+export async function blenderCreateCurve(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; name?: string; curveType?: string; location?: number[] },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const curveType = input.curveType ?? "BEZIER";
+    const loc = input.location ? `(${input.location.map((v) => v ?? 0).join(", ")})` : "(0, 0, 0)";
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `bpy.ops.curve.primitive_bezier_curve_add(location=${loc})\n` +
+      "obj = bpy.context.object\n" +
+      `if ${JSON.stringify(input.name ?? "")}:\n    obj.name = ${JSON.stringify(input.name ?? "")}\n` +
+      "result = {'name': obj.name, 'type': obj.type, 'curve_type': obj.data.splines[0].type, 'location': list(obj.location)}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Create curve failed: ${err.message}`);
+  }
+}
+
+export async function blenderCreateArmature(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; name?: string; location?: number[] },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const loc = input.location ? `(${input.location.map((v) => v ?? 0).join(", ")})` : "(0, 0, 0)";
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `bpy.ops.object.armature_add(location=${loc})\n` +
+      "obj = bpy.context.object\n" +
+      `if ${JSON.stringify(input.name ?? "")}:\n    obj.name = ${JSON.stringify(input.name ?? "")}\n` +
+      "result = {'name': obj.name, 'type': obj.type, 'bone_count': len(obj.data.bones), 'location': list(obj.location)}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Create armature failed: ${err.message}`);
+  }
+}
+
+export async function blenderCreateMetaball(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; name?: string; radius?: number; location?: number[] },
+): Promise<ToolResponse> {
+  const radius = input.radius ?? 1;
+  const loc = input.location ? `(${input.location.map((v) => v ?? 0).join(", ")})` : "(0, 0, 0)";
+  return createPrimitive(registry, input.workspaceId, "metaball_primitive_add",
+    `type='BALL'`, `radius=${radius}, location=${loc}`,
+    "{'name': obj.name, 'type': obj.type, 'location': list(obj.location)}");
+}
+
+// ─── Object Operations ──────────────────────────────────────────────────────
+
+export async function blenderRenameObject(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectName: string; newName: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `object_name = ${JSON.stringify(input.objectName)}\n` +
+      `new_name = ${JSON.stringify(input.newName)}\n` +
+      "obj = bpy.data.objects.get(object_name)\n" +
+      "if obj is None:\n" +
+      "    raise RuntimeError('Object not found: ' + object_name)\n" +
+      "obj.name = new_name\n" +
+      "result = {'old_name': object_name, 'new_name': obj.name}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Rename object failed: ${err.message}`);
+  }
+}
+
+export async function blenderDuplicateObject(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectNames: string[]; duplicateType?: string; offset?: number[] },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const duplicateType = input.duplicateType || "LINKED";
+    const offset = input.offset ? JSON.stringify(input.offset) : "[0, 0, 0]";
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `object_names = ${JSON.stringify(input.objectNames)}\n` +
+      `duplicate_type = ${JSON.stringify(duplicateType)}.upper()\n` +
+      `offset = ${offset}\n` +
+      "if duplicate_type not in {'LINKED', 'NORMAL', 'INSTANCE'}:\n" +
+      "    raise RuntimeError('Unsupported duplicate type: ' + duplicate_type)\n" +
+      "if bpy.ops.object.mode_set.poll():\n" +
+      "    bpy.ops.object.mode_set(mode='OBJECT')\n" +
+      "bpy.ops.object.select_all(action='DESELECT')\n" +
+      "created = []\n" +
+      "for name in object_names:\n" +
+      "    obj = bpy.data.objects.get(name)\n" +
+      "    if obj is None:\n" +
+      "        continue\n" +
+      "    obj.select_set(True)\n" +
+      "    bpy.context.view_layer.objects.active = obj\n" +
+      "    if duplicate_type == 'LINKED':\n" +
+      "        bpy.ops.object.duplicate_move_linked()\n" +
+      "    else:\n" +
+      "        bpy.ops.object.duplicate_move()\n" +
+      "    dup = bpy.context.object\n" +
+      "    dup.location.x += float(offset[0]); dup.location.y += float(offset[1]); dup.location.z += float(offset[2])\n" +
+      "    created.append(dup.name)\n" +
+      "    obj.select_set(False)\n" +
+      "result = {'created': created, 'count': len(created)}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Duplicate object failed: ${err.message}`);
+  }
+}
+
+export async function blenderParentObject(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; childNames: string[]; parentName: string; keepTransform?: boolean },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const keepTransform = input.keepTransform ?? false;
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `child_names = ${JSON.stringify(input.childNames)}\n` +
+      `parent_name = ${JSON.stringify(input.parentName)}\n` +
+      `keep_transform = ${keepTransform ? "True" : "False"}\n` +
+      "parent = bpy.data.objects.get(parent_name)\n" +
+      "if parent is None:\n" +
+      "    raise RuntimeError('Parent object not found: ' + parent_name)\n" +
+      "if bpy.ops.object.mode_set.poll():\n" +
+      "    bpy.ops.object.mode_set(mode='OBJECT')\n" +
+      "bpy.ops.object.select_all(action='DESELECT')\n" +
+      "children = [bpy.data.objects.get(n) for n in child_names]\n" +
+      "children = [c for c in children if c]\n" +
+      "for child in children:\n" +
+      "    child.select_set(True)\n" +
+      "parent.select_set(True)\n" +
+      "bpy.context.view_layer.objects.active = parent\n" +
+      "bpy.ops.object.parent_set(type='OBJECT', keep_transform=keep_transform)\n" +
+      "result = {'parent': parent.name, 'children': [c.name for c in children], 'count': len(children)}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Parent object failed: ${err.message}`);
+  }
+}
+
+export async function blenderUnparentObject(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectNames: string[]; keepTransform?: boolean },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const keepTransform = input.keepTransform ?? true;
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `object_names = ${JSON.stringify(input.objectNames)}\n` +
+      `keep_transform = ${keepTransform ? "True" : "False"}\n` +
+      "if bpy.ops.object.mode_set.poll():\n" +
+      "    bpy.ops.object.mode_set(mode='OBJECT')\n" +
+      "bpy.ops.object.select_all(action='DESELECT')\n" +
+      "objects = [bpy.data.objects.get(n) for n in object_names]\n" +
+      "objects = [o for o in objects if o and o.parent]\n" +
+      "for obj in objects:\n" +
+      "    obj.select_set(True)\n" +
+      "if objects:\n" +
+      "    bpy.context.view_layer.objects.active = objects[0]\n" +
+      "    bpy.ops.object.parent_clear(type='CLEAR' if keep_transform else 'CLEAR_KEEP_TRANSFORM')\n" +
+      "result = {'unparented': [obj.name for obj in objects], 'count': len(objects)}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Unparent object failed: ${err.message}`);
+  }
+}
+
+export async function blenderHideObjects(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectNames: string[]; hide?: boolean },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const hide = input.hide ?? true;
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `object_names = ${JSON.stringify(input.objectNames)}\n` +
+      `hide = ${hide ? "True" : "False"}\n` +
+      "changed = []\n" +
+      "for name in object_names:\n" +
+      "    obj = bpy.data.objects.get(name)\n" +
+      "    if obj is None:\n" +
+      "        continue\n" +
+      "    obj.hide_set(hide)\n" +
+      "    changed.append(obj.name)\n" +
+      "result = {'hidden': changed, 'count': len(changed), 'hide': hide}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Hide objects failed: ${err.message}`);
+  }
+}
+
+export async function blenderShowAllObjects(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      "for obj in bpy.data.objects:\n" +
+      "    obj.hide_set(False)\n" +
+      "    obj.hide_render = False\n" +
+      "result = {'shown': len(bpy.data.objects)}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Show all objects failed: ${err.message}`);
+  }
+}
+
+export async function blenderSetOrigin(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectNames: string[]; origin?: string; location?: number[] },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const origin = input.origin || "geometry";
+    const loc = input.location ? `(${input.location.map((v) => v ?? 0).join(", ")})` : null;
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `object_names = ${JSON.stringify(input.objectNames)}\n` +
+      `origin = ${JSON.stringify(origin)}.lower()\n` +
+      `loc = ${loc}\n` +
+      "if bpy.ops.object.mode_set.poll():\n" +
+      "    bpy.ops.object.mode_set(mode='OBJECT')\n" +
+      "bpy.ops.object.select_all(action='DESELECT')\n" +
+      "objects = [bpy.data.objects.get(n) for n in object_names]\n" +
+      "objects = [o for o in objects if o]\n" +
+      "for obj in objects:\n" +
+      "    obj.select_set(True)\n" +
+      "if objects:\n" +
+      "    bpy.context.view_layer.objects.active = objects[0]\n" +
+      "    if origin == 'cursor':\n" +
+      "        bpy.ops.object.origin_set(type='ORIGIN_CURSOR')\n" +
+      "    elif origin == 'center':\n" +
+      "        bpy.ops.object.origin_set(type='ORIGIN_CENTER_OF_MASS')\n" +
+      "    elif loc is not None:\n" +
+      "        for obj in objects:\n" +
+      "            obj.select_set(False)\n" +
+      "        bpy.context.scene.cursor.location = loc\n" +
+      "        bpy.ops.object.select_all(action='DESELECT')\n" +
+      "        for obj in objects:\n" +
+      "            obj.select_set(True)\n" +
+      "        bpy.ops.object.origin_set(type='ORIGIN_CURSOR')\n" +
+      "    else:\n" +
+      "        bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY')\n" +
+      "result = {'objects': [obj.name for obj in objects], 'origin': origin, 'count': len(objects)}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Set origin failed: ${err.message}`);
+  }
+}
+
+export async function blenderApplyTransforms(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectNames: string[]; location?: boolean; rotation?: boolean; scale?: boolean },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const location = input.location ?? true;
+    const rotation = input.rotation ?? true;
+    const scale = input.scale ?? true;
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `object_names = ${JSON.stringify(input.objectNames)}\n` +
+      `apply_loc = ${location ? "True" : "False"}\n` +
+      `apply_rot = ${rotation ? "True" : "False"}\n` +
+      `apply_scale = ${scale ? "True" : "False"}\n` +
+      "if bpy.ops.object.mode_set.poll():\n" +
+      "    bpy.ops.object.mode_set(mode='OBJECT')\n" +
+      "bpy.ops.object.select_all(action='DESELECT')\n" +
+      "objects = [bpy.data.objects.get(n) for n in object_names]\n" +
+      "objects = [o for o in objects if o]\n" +
+      "for obj in objects:\n" +
+      "    obj.select_set(True)\n" +
+      "if objects:\n" +
+      "    bpy.context.view_layer.objects.active = objects[0]\n" +
+      "    bpy.ops.object.transform_apply(location=apply_loc, rotation=apply_rot, scale=apply_scale)\n" +
+      "result = {'applied': [obj.name for obj in objects], 'count': len(objects)}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Apply transforms failed: ${err.message}`);
+  }
+}
+
+export async function blenderClearTransforms(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectNames: string[]; location?: boolean; rotation?: boolean; scale?: boolean },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const location = input.location ?? true;
+    const rotation = input.rotation ?? true;
+    const scale = input.scale ?? false;
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `object_names = ${JSON.stringify(input.objectNames)}\n` +
+      `clear_loc = ${location ? "True" : "False"}\n` +
+      `clear_rot = ${rotation ? "True" : "False"}\n` +
+      `clear_scale = ${scale ? "True" : "False"}\n` +
+      "if bpy.ops.object.mode_set.poll():\n" +
+      "    bpy.ops.object.mode_set(mode='OBJECT')\n" +
+      "bpy.ops.object.select_all(action='DESELECT')\n" +
+      "objects = [bpy.data.objects.get(n) for n in object_names]\n" +
+      "objects = [o for o in objects if o]\n" +
+      "for obj in objects:\n" +
+      "    obj.select_set(True)\n" +
+      "if objects:\n" +
+      "    bpy.context.view_layer.objects.active = objects[0]\n" +
+      "    bpy.ops.object.location_clear(clear_delta=clear_loc)\n" +
+      "    bpy.ops.object.rotation_clear(clear_delta=clear_rot)\n" +
+      "    bpy.ops.object.scale_clear(clear_delta=clear_scale)\n" +
+      "result = {'cleared': [obj.name for obj in objects], 'count': len(objects)}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Clear transforms failed: ${err.message}`);
+  }
+}
+
+export async function blenderMirrorObjects(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectNames: string[]; axis?: string[] },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const axes = input.axis ?? ["X"];
+    const axisFlags = axes.map((a) => a.toUpperCase()).filter((a) => ["X", "Y", "Z"].includes(a));
+    if (axisFlags.length === 0) axisFlags.push("X");
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `object_names = ${JSON.stringify(input.objectNames)}\n` +
+      `axes = ${JSON.stringify(axisFlags)}\n` +
+      "if bpy.ops.object.mode_set.poll():\n" +
+      "    bpy.ops.object.mode_set(mode='OBJECT')\n" +
+      "bpy.ops.object.select_all(action='DESELECT')\n" +
+      "objects = [bpy.data.objects.get(n) for n in object_names]\n" +
+      "objects = [o for o in objects if o]\n" +
+      "for obj in objects:\n" +
+      "    obj.select_set(True)\n" +
+      "if objects:\n" +
+      "    bpy.context.view_layer.objects.active = objects[0]\n" +
+      "    use_x = 'X' in axes\n" +
+      "    use_y = 'Y' in axes\n" +
+      "    use_z = 'Z' in axes\n" +
+      "    bpy.ops.transform.mirror(orient_type='GLOBAL', constraint_axis=(use_x, use_y, use_z))\n" +
+      "result = {'mirrored': [obj.name for obj in objects], 'axes': axes, 'count': len(objects)}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Mirror objects failed: ${err.message}`);
+  }
+}
+
+export async function blenderSetCursorLocation(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; location: number[] },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const loc = `(${input.location.slice(0, 3).map((v) => v ?? 0).join(", ")})`;
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `bpy.context.scene.cursor.location = ${loc}\n` +
+      "result = {'cursor': [round(v, 4) for v in bpy.context.scene.cursor.location]}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Set cursor location failed: ${err.message}`);
+  }
+}
+
+// ─── Selection ──────────────────────────────────────────────────────────────
+
+export async function blenderSelectByType(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectType: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `object_type = ${JSON.stringify(input.objectType)}.upper()\n` +
+      "if bpy.ops.object.mode_set.poll():\n" +
+      "    bpy.ops.object.mode_set(mode='OBJECT')\n" +
+      "bpy.ops.object.select_all(action='DESELECT')\n" +
+      "matches = [obj for obj in bpy.context.scene.objects if obj.type == object_type]\n" +
+      "for obj in matches:\n" +
+      "    obj.select_set(True)\n" +
+      "result = {'selected': [obj.name for obj in matches], 'type': object_type, 'count': len(matches)}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Select by type failed: ${err.message}`);
+  }
+}
+
+export async function blenderSelectLinked(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectName: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `object_name = ${JSON.stringify(input.objectName)}\n` +
+      "obj = bpy.data.objects.get(object_name)\n" +
+      "if obj is None:\n" +
+      "    raise RuntimeError('Object not found: ' + object_name)\n" +
+      "if bpy.ops.object.mode_set.poll():\n" +
+      "    bpy.ops.object.mode_set(mode='OBJECT')\n" +
+      "bpy.ops.object.select_all(action='DESELECT')\n" +
+      "obj.select_set(True)\n" +
+      "bpy.context.view_layer.objects.active = obj\n" +
+      "bpy.ops.object.select_linked(type='OBDATA')\n" +
+      "result = {'selected': [o.name for o in bpy.context.selected_objects], 'count': len(bpy.context.selected_objects)}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Select linked failed: ${err.message}`);
+  }
+}
+
+export async function blenderSelectByCollection(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; collectionName: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `collection_name = ${JSON.stringify(input.collectionName)}\n` +
+      "coll = bpy.data.collections.get(collection_name)\n" +
+      "if coll is None:\n" +
+      "    raise RuntimeError('Collection not found: ' + collection_name)\n" +
+      "if bpy.ops.object.mode_set.poll():\n" +
+      "    bpy.ops.object.mode_set(mode='OBJECT')\n" +
+      "bpy.ops.object.select_all(action='DESELECT')\n" +
+      "for obj in coll.objects:\n" +
+      "    obj.select_set(True)\n" +
+      "result = {'selected': [obj.name for obj in coll.objects], 'collection': coll.name, 'count': len(coll.objects)}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Select by collection failed: ${err.message}`);
+  }
+}
+
+export async function blenderSelectByMaterial(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; materialName: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `material_name = ${JSON.stringify(input.materialName)}\n` +
+      "if bpy.ops.object.mode_set.poll():\n" +
+      "    bpy.ops.object.mode_set(mode='OBJECT')\n" +
+      "bpy.ops.object.select_all(action='DESELECT')\n" +
+      "matches = []\n" +
+      "for obj in bpy.context.scene.objects:\n" +
+      "    names = [slot.material.name for slot in obj.material_slots if slot.material]\n" +
+      "    if material_name in names:\n" +
+      "        obj.select_set(True)\n" +
+      "        matches.append(obj.name)\n" +
+      "result = {'selected': matches, 'material': material_name, 'count': len(matches)}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Select by material failed: ${err.message}`);
+  }
+}
+
+export async function blenderSelectByPolycount(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; maxTriangles?: number; minTriangles?: number },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const maxTriangles = input.maxTriangles ?? Number.POSITIVE_INFINITY;
+    const minTriangles = input.minTriangles ?? 0;
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `max_tris = ${Number.isFinite(maxTriangles) ? maxTriangles : "float('inf')"}\n` +
+      `min_tris = ${minTriangles}\n` +
+      "if bpy.ops.object.mode_set.poll():\n" +
+      "    bpy.ops.object.mode_set(mode='OBJECT')\n" +
+      "bpy.ops.object.select_all(action='DESELECT')\n" +
+      "matches = []\n" +
+      "for obj in bpy.context.scene.objects:\n" +
+      "    if obj.type != 'MESH' or not obj.data:\n" +
+      "        continue\n" +
+      "    tris = sum(max(len(p.vertices) - 2, 1) for p in obj.data.polygons)\n" +
+      "    if min_tris <= tris <= max_tris:\n" +
+      "        obj.select_set(True)\n" +
+      "        matches.append({'name': obj.name, 'triangles': tris})\n" +
+      "matches.sort(key=lambda m: m['triangles'], reverse=True)\n" +
+      "result = {'selected': [m['name'] for m in matches], 'count': len(matches), 'details': matches[:50]}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Select by polycount failed: ${err.message}`);
+  }
+}
+
+export async function blenderInvertSelection(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      "bpy.ops.object.select_all(action='INVERT')\n" +
+      "result = {'selected': [o.name for o in bpy.context.selected_objects], 'count': len(bpy.context.selected_objects)}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Invert selection failed: ${err.message}`);
+  }
+}
+
+export async function blenderDeselectAll(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      "bpy.ops.object.select_all(action='DESELECT')\n" +
+      "result = {'selected': [], 'count': 0}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Deselect all failed: ${err.message}`);
+  }
+}
+
+export async function blenderSelectAll(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      "bpy.ops.object.select_all(action='SELECT')\n" +
+      "result = {'selected': [o.name for o in bpy.context.selected_objects], 'count': len(bpy.context.selected_objects)}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Select all failed: ${err.message}`);
+  }
+}
+
+// ─── Mesh Edit Mode ─────────────────────────────────────────────────────────
+
+export async function blenderEnterEditMode(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectName: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `object_name = ${JSON.stringify(input.objectName)}\n` +
+      "obj = bpy.data.objects.get(object_name)\n" +
+      "if obj is None:\n" +
+      "    raise RuntimeError('Object not found: ' + object_name)\n" +
+      "bpy.context.view_layer.objects.active = obj\n" +
+      "obj.select_set(True)\n" +
+      "bpy.ops.object.mode_set(mode='EDIT')\n" +
+      "result = {'object': obj.name, 'mode': bpy.context.mode}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Enter edit mode failed: ${err.message}`);
+  }
+}
+
+export async function blenderExitEditMode(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      "if bpy.ops.object.mode_set.poll():\n" +
+      "    bpy.ops.object.mode_set(mode='OBJECT')\n" +
+      "result = {'mode': bpy.context.mode}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Exit edit mode failed: ${err.message}`);
+  }
+}
+
+export async function blenderSetMeshSelectionMode(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; mode?: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const mode = input.mode || "VERT";
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `mode = ${JSON.stringify(mode)}.upper()\n` +
+      "if mode not in {'VERT', 'EDGE', 'FACE'}:\n" +
+      "    raise RuntimeError('Unsupported selection mode: ' + mode)\n" +
+      "mesh = bpy.context.object.data if bpy.context.object else None\n" +
+      "if mesh is None or not hasattr(mesh, 'use_mesh_faces'):\n" +
+      "    raise RuntimeError('Active object is not an editable mesh')\n" +
+      "bpy.ops.object.mode_set(mode='EDIT')\n" +
+      "mesh = bpy.context.object.data\n" +
+      "mesh.select_mode = {'VERT' if mode == 'VERT' else 'EDGE' if mode == 'EDGE' else 'FACE'}\n" +
+      "result = {'mode': mode}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Set mesh selection mode failed: ${err.message}`);
+  }
+}
+
+export async function blenderExtrudeSelection(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectName: string; amount?: number[] },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const amount = input.amount ?? [0, 0, 1];
+    const res = await client.sendExecute(
+      "import bpy, bmesh\n" +
+      "from mathutils import Vector\n" +
+      `object_name = ${JSON.stringify(input.objectName)}\n` +
+      "obj = bpy.data.objects.get(object_name)\n" +
+      "if obj is None or obj.type != 'MESH':\n" +
+      "    raise RuntimeError('Object not found or not a mesh: ' + object_name)\n" +
+      "if bpy.ops.object.mode_set.poll():\n" +
+      "    bpy.ops.object.mode_set(mode='OBJECT')\n" +
+      "bpy.context.view_layer.objects.active = obj\n" +
+      "bpy.ops.object.mode_set(mode='EDIT')\n" +
+      "bm = bmesh.from_edit_mesh(obj.data)\n" +
+      "selected = [v for v in bm.verts if v.select]\n" +
+      "selected_faces = [f for f in bm.faces if f.select]\n" +
+      "if not selected:\n" +
+      "    raise RuntimeError('Nothing selected to extrude')\n" +
+      `geom = bmesh.ops.extrude_face_region(bm, geom=selected + selected_faces)\n` +
+      `vec = Vector(${JSON.stringify(amount)})\n` +
+      "inv_mat = obj.matrix_world.inverted().to_3x3()\n" +
+      "for v in geom['geom']:\n" +
+      "    if isinstance(v, bmesh.types.BMVert):\n" +
+      "        v.co += inv_mat @ vec\n" +
+      "bmesh.update_edit_mesh(obj.data)\n" +
+      "result = {'object': obj.name, 'extruded_verts': len(selected)}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Extrude selection failed: ${err.message}`);
+  }
+}
+
+export async function blenderBevelSelection(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectName: string; amount?: number; segments?: number },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const amount = input.amount ?? 0.05;
+    const segments = input.segments ?? 1;
+    const res = await client.sendExecute(
+      meshEditPrologue(input.objectName) +
+      `bmesh.ops.bevel(bm, geom=[v for v in bm.verts if v.select] + [e for e in bm.edges if e.select] + [f for f in bm.faces if f.select], offset=${amount}, segments=${segments}, affect='VERTICES')\n` +
+      "bmesh.update_edit_mesh(obj.data)\n" +
+      "result = {'object': obj.name, 'amount': " + JSON.stringify(amount) + ", 'segments': " + JSON.stringify(segments) + "}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Bevel selection failed: ${err.message}`);
+  }
+}
+
+export async function blenderLoopCut(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectName: string; cuts?: number },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const cuts = Math.max(1, input.cuts ?? 1);
+    const res = await client.sendExecute(
+      meshEditPrologue(input.objectName) +
+      `bpy.ops.mesh.loopcut_slide(number_cuts=${cuts})\n` +
+      "result = {'object': obj.name, 'cuts': " + JSON.stringify(cuts) + "}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Loop cut failed: ${err.message}`);
+  }
+}
+
+export async function blenderSubdivide(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectName: string; cuts?: number; smooth?: number },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const cuts = Math.max(1, input.cuts ?? 1);
+    const smooth = input.smooth ?? 0;
+    const res = await client.sendExecute(
+      meshEditPrologue(input.objectName) +
+      "bpy.ops.mesh.subdivide(number_cuts=" + JSON.stringify(cuts) + ", smooth=" + JSON.stringify(smooth) + ")\n" +
+      "result = {'object': obj.name, 'cuts': " + JSON.stringify(cuts) + "}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Subdivide failed: ${err.message}`);
+  }
+}
+
+export async function blenderMergeByDistance(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectName: string; distance?: number },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const distance = input.distance ?? 0.001;
+    const res = await client.sendExecute(
+      meshEditPrologue(input.objectName) +
+      "bpy.ops.mesh.select_all(action='SELECT')\n" +
+      "bpy.ops.mesh.remove_doubles(threshold=" + JSON.stringify(distance) + ")\n" +
+      "result = {'object': obj.name, 'distance': " + JSON.stringify(distance) + "}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Merge by distance failed: ${err.message}`);
+  }
+}
+
+export async function blenderRecalculateNormals(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectName: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      meshEditPrologue(input.objectName) +
+      "bpy.ops.mesh.select_all(action='SELECT')\n" +
+      "bpy.ops.mesh.normals_make_consistent(inside=False)\n" +
+      "bmesh.update_edit_mesh(obj.data)\n" +
+      "result = {'object': obj.name, 'normals': 'recalculated'}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Recalculate normals failed: ${err.message}`);
+  }
+}
+
+export async function blenderFlipNormals(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectName: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      meshEditPrologue(input.objectName) +
+      "bpy.ops.mesh.flip_normals()\n" +
+      "bmesh.update_edit_mesh(obj.data)\n" +
+      "result = {'object': obj.name, 'normals': 'flipped'}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Flip normals failed: ${err.message}`);
+  }
+}
+
+export async function blenderTriangulateFaces(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectName: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      meshEditPrologue(input.objectName) +
+      "bpy.ops.mesh.select_all(action='SELECT')\n" +
+      "bpy.ops.mesh.quads_convert_to_tris(quad_method='BEAUTY', ngon_method='BEAUTY')\n" +
+      "bmesh.update_edit_mesh(obj.data)\n" +
+      "result = {'object': obj.name, 'faces': 'triangulated'}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Triangulate faces failed: ${err.message}`);
+  }
+}
+
+export async function blenderInsetFaces(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectName: string; thickness?: number; depth?: number },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const thickness = input.thickness ?? 0.05;
+    const depth = input.depth ?? 0;
+    const res = await client.sendExecute(
+      meshEditPrologue(input.objectName) +
+      "bpy.ops.mesh.inset(thickness=" + JSON.stringify(thickness) + ", depth=" + JSON.stringify(depth) + ", use_individual=True)\n" +
+      "bmesh.update_edit_mesh(obj.data)\n" +
+      "result = {'object': obj.name, 'thickness': " + JSON.stringify(thickness) + "}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Inset faces failed: ${err.message}`);
+  }
+}
+
+export async function blenderDeleteLooseGeometry(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectName: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      meshEditPrologue(input.objectName) +
+      "bpy.ops.mesh.select_all(action='SELECT')\n" +
+      "bpy.ops.mesh.delete_loose()\n" +
+      "bmesh.update_edit_mesh(obj.data)\n" +
+      "result = {'object': obj.name, 'loose': 'deleted'}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Delete loose geometry failed: ${err.message}`);
+  }
+}
+
+export async function blenderFixNonManifold(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectName: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      meshEditPrologue(input.objectName) +
+      "bpy.ops.mesh.select_all(action='SELECT')\n" +
+      "bpy.ops.mesh.select_non_manifold()\n" +
+      "selected = len([v for v in bm.verts if v.select])\n" +
+      "result = {'object': obj.name, 'non_manifold_verts': selected}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Fix non-manifold failed: ${err.message}`);
+  }
+}
+
+export async function blenderSetFaceSmoothing(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectName: string; smooth?: boolean },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const smooth = input.smooth ?? true;
+    const res = await client.sendExecute(
+      meshEditPrologue(input.objectName) +
+      `for face in bm.faces:\n    face.smooth = ${smooth ? "True" : "False"}\n` +
+      "bmesh.update_edit_mesh(obj.data)\n" +
+      "result = {'object': obj.name, 'smooth': " + JSON.stringify(smooth) + "}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Set face smoothing failed: ${err.message}`);
+  }
+}
+
+// ─── Modifiers ──────────────────────────────────────────────────────────────
+
+export async function blenderAddModifier(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectName: string; modifierType: string; name?: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const name = input.name ?? input.modifierType;
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `object_name = ${JSON.stringify(input.objectName)}\n` +
+      `modifier_type = ${JSON.stringify(input.modifierType)}\n` +
+      `modifier_name = ${JSON.stringify(name)}\n` +
+      "obj = bpy.data.objects.get(object_name)\n" +
+      "if obj is None:\n" +
+      "    raise RuntimeError('Object not found: ' + object_name)\n" +
+      "try:\n" +
+      "    mod = obj.modifiers.new(modifier_name, modifier_type)\n" +
+      "except Exception as exc:\n" +
+      "    raise RuntimeError('Unsupported modifier type: ' + modifier_type + ' - ' + str(exc))\n" +
+      "result = {'object': obj.name, 'modifier': mod.name, 'type': mod.type}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Add modifier failed: ${err.message}`);
+  }
+}
+
+export async function blenderRemoveModifier(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectName: string; modifierName: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `object_name = ${JSON.stringify(input.objectName)}\n` +
+      `modifier_name = ${JSON.stringify(input.modifierName)}\n` +
+      "obj = bpy.data.objects.get(object_name)\n" +
+      "if obj is None:\n" +
+      "    raise RuntimeError('Object not found: ' + object_name)\n" +
+      "mod = obj.modifiers.get(modifier_name)\n" +
+      "if mod is None:\n" +
+      "    raise RuntimeError('Modifier not found: ' + modifier_name)\n" +
+      "obj.modifiers.remove(mod)\n" +
+      "result = {'object': obj.name, 'removed': modifier_name, 'remaining': [m.name for m in obj.modifiers]}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Remove modifier failed: ${err.message}`);
+  }
+}
+
+export async function blenderApplyModifier(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectName: string; modifierName: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `object_name = ${JSON.stringify(input.objectName)}\n` +
+      `modifier_name = ${JSON.stringify(input.modifierName)}\n` +
+      "obj = bpy.data.objects.get(object_name)\n" +
+      "if obj is None:\n" +
+      "    raise RuntimeError('Object not found: ' + object_name)\n" +
+      "mod = obj.modifiers.get(modifier_name)\n" +
+      "if mod is None:\n" +
+      "    raise RuntimeError('Modifier not found: ' + modifier_name)\n" +
+      "bpy.context.view_layer.objects.active = obj\n" +
+      "bpy.ops.object.modifier_apply(modifier=modifier_name)\n" +
+      "result = {'object': obj.name, 'applied': modifier_name, 'remaining': [m.name for m in obj.modifiers]}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Apply modifier failed: ${err.message}`);
+  }
+}
+
+// ─── Materials ──────────────────────────────────────────────────────────────
+
+export async function blenderCreateMaterial(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; name: string; color?: number[]; roughness?: number; metallic?: number },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const color = input.color ? `(${input.color.slice(0, 4).map((v) => v ?? 1).join(", ")})` : "(0.8, 0.8, 0.8, 1)";
+    const roughness = input.roughness ?? 0.5;
+    const metallic = input.metallic ?? 0;
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `mat_name = ${JSON.stringify(input.name)}\n` +
+      `color = ${color}\n` +
+      `roughness = ${roughness}\n` +
+      `metallic = ${metallic}\n` +
+      "mat = bpy.data.materials.get(mat_name)\n" +
+      "if mat is None:\n" +
+      "    mat = bpy.data.materials.new(mat_name)\n" +
+      "mat.use_nodes = True\n" +
+      "bsdf = mat.node_tree.nodes.get('Principled BSDF')\n" +
+      "if bsdf:\n" +
+      "    bsdf.inputs['Base Color'].default_value = color\n" +
+      "    bsdf.inputs['Roughness'].default_value = roughness\n" +
+      "    bsdf.inputs['Metallic'].default_value = metallic\n" +
+      "result = {'name': mat.name, 'color': list(mat.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value) if 'Principled BSDF' in mat.node_tree.nodes else None, 'users': mat.users}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Create material failed: ${err.message}`);
+  }
+}
+
+export async function blenderAssignMaterial(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectNames: string[]; materialName: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `object_names = ${JSON.stringify(input.objectNames)}\n` +
+      `material_name = ${JSON.stringify(input.materialName)}\n` +
+      "mat = bpy.data.materials.get(material_name)\n" +
+      "if mat is None:\n" +
+      "    raise RuntimeError('Material not found: ' + material_name)\n" +
+      "assigned = []\n" +
+      "for name in object_names:\n" +
+      "    obj = bpy.data.objects.get(name)\n" +
+      "    if obj is None or obj.type != 'MESH':\n" +
+      "        continue\n" +
+      "    if not obj.data.materials:\n" +
+      "        obj.data.materials.append(mat)\n" +
+      "    else:\n" +
+      "        obj.data.materials[0] = mat\n" +
+      "    assigned.append(obj.name)\n" +
+      "result = {'assigned': assigned, 'material': mat.name, 'count': len(assigned)}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Assign material failed: ${err.message}`);
+  }
+}
+
+export async function blenderListMaterials(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      "result = {'materials': [{'name': m.name, 'users': m.users, 'use_nodes': m.use_nodes} for m in bpy.data.materials], 'count': len(bpy.data.materials)}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`List materials failed: ${err.message}`);
+  }
+}
+
+export async function blenderRenameMaterial(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; materialName: string; newName: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `material_name = ${JSON.stringify(input.materialName)}\n` +
+      `new_name = ${JSON.stringify(input.newName)}\n` +
+      "mat = bpy.data.materials.get(material_name)\n" +
+      "if mat is None:\n" +
+      "    raise RuntimeError('Material not found: ' + material_name)\n" +
+      "mat.name = new_name\n" +
+      "result = {'old_name': material_name, 'new_name': mat.name}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Rename material failed: ${err.message}`);
+  }
+}
+
+export async function blenderDuplicateMaterial(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; materialName: string; newName?: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `material_name = ${JSON.stringify(input.materialName)}\n` +
+      `new_name = ${JSON.stringify(input.newName ?? "")}\n` +
+      "mat = bpy.data.materials.get(material_name)\n" +
+      "if mat is None:\n" +
+      "    raise RuntimeError('Material not found: ' + material_name)\n" +
+      "dup = mat.copy()\n" +
+      "if new_name:\n" +
+      "    dup.name = new_name\n" +
+      "result = {'source': mat.name, 'duplicate': dup.name}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Duplicate material failed: ${err.message}`);
+  }
+}
+
+export async function blenderRemoveUnusedMaterials(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      "removed = []\n" +
+      "for mat in list(bpy.data.materials):\n" +
+      "    if mat.users == 0:\n" +
+      "        removed.append(mat.name)\n" +
+      "        bpy.data.materials.remove(mat)\n" +
+      "result = {'removed': removed, 'count': len(removed)}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Remove unused materials failed: ${err.message}`);
+  }
+}
+
+// ─── Viewport ───────────────────────────────────────────────────────────────
+
+export async function blenderFrameAll(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      VIEW3D_HELPER +
+      "window, screen, area, region, space = _view3d_context()\n" +
+      "with bpy.context.temp_override(window=window, screen=screen, area=area, region=region, space_data=space):\n" +
+      "    bpy.ops.view3d.view_all(use_all_regions=False)\n" +
+      "result = {'framed': 'all'}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Frame all failed: ${err.message}`);
+  }
+}
+
+export async function blenderToggleXray(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; enabled?: boolean },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const enabled = input.enabled;
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      VIEW3D_HELPER +
+      "window, screen, area, region, space = _view3d_context()\n" +
+      `if ${enabled === undefined ? "True" : "False"}:\n` +
+      `    space.shading.show_xray = not space.shading.show_xray\n` +
+      "else:\n" +
+      `    space.shading.show_xray = ${enabled ? "True" : "False"}\n` +
+      "result = {'xray': space.shading.show_xray}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Toggle X-ray failed: ${err.message}`);
+  }
+}
+
+export async function blenderToggleOverlays(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; enabled?: boolean },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const enabled = input.enabled;
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      VIEW3D_HELPER +
+      "window, screen, area, region, space = _view3d_context()\n" +
+      `if ${enabled === undefined ? "True" : "False"}:\n` +
+      `    space.overlay.show_overlays = not space.overlay.show_overlays\n` +
+      "else:\n" +
+      `    space.overlay.show_overlays = ${enabled ? "True" : "False"}\n` +
+      "result = {'overlays': space.overlay.show_overlays}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Toggle overlays failed: ${err.message}`);
+  }
+}
+
+export async function blenderToggleLocalView(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; enable?: boolean },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const enable = input.enable;
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      VIEW3D_HELPER +
+      "window, screen, area, region, space = _view3d_context()\n" +
+      "was_local = space.local_view is not None\n" +
+      `if ${enable === undefined ? "True" : "False"}:\n` +
+      "    bpy.ops.object.local_view_override()\n" +
+      "else:\n" +
+      `    if ${enable ? "True" : "False"} and not was_local:\n` +
+      "        bpy.ops.object.local_view_override()\n" +
+      `    elif not ${enable ? "True" : "False"} and was_local:\n` +
+      "        bpy.ops.object.local_view_override()\n" +
+      "result = {'local_view': space.local_view is not None}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Toggle local view failed: ${err.message}`);
+  }
+}
+
+// ─── File & Export ──────────────────────────────────────────────────────────
+
+export async function blenderExportFbx(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; filepath: string; applyScale?: string; useSelected?: boolean },
+): Promise<ToolResponse> {
+  try {
+    const workspace = registry.getWorkspace(input.workspaceId);
+    const absPath = registry.resolveArtifactPath(workspace, input.filepath, "blender");
+    await mkdir(dirname(absPath), { recursive: true });
+    const client = getBlenderClient(input.workspaceId);
+    const applyScale = input.applyScale ?? "FBX_SCALE_NONE";
+    const useSelected = input.useSelected ?? false;
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `bpy.ops.export_scene.fbx(filepath=${JSON.stringify(absPath)}, use_selection=${useSelected ? "True" : "False"}, apply_scale_options='${applyScale}')\n` +
+      `result = {'exported': ${JSON.stringify(absPath)}}\n`,
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Export FBX failed: ${err.message}`);
+  }
+}
+
+export async function blenderExportObj(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; filepath: string; useSelected?: boolean },
+): Promise<ToolResponse> {
+  try {
+    const workspace = registry.getWorkspace(input.workspaceId);
+    const absPath = registry.resolveArtifactPath(workspace, input.filepath, "blender");
+    await mkdir(dirname(absPath), { recursive: true });
+    const client = getBlenderClient(input.workspaceId);
+    const useSelected = input.useSelected ?? false;
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `bpy.ops.wm.obj_export(filepath=${JSON.stringify(absPath)}, export_selected_objects=${useSelected ? "True" : "False"})\n` +
+      `result = {'exported': ${JSON.stringify(absPath)}}\n`,
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Export OBJ failed: ${err.message}`);
+  }
+}
+
+export async function blenderPurgeUnusedData(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      "bpy.ops.outliner.orphans_purge()\n" +
+      "result = {'purged': 'orphan data blocks removed'}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Purge unused data failed: ${err.message}`);
+  }
+}
+
+// ─── Animation ──────────────────────────────────────────────────────────────
+
+export async function blenderSetFrame(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; frame: number },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `bpy.context.scene.frame_set(${input.frame})\n` +
+      "result = {'frame': bpy.context.scene.frame_current}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Set frame failed: ${err.message}`);
+  }
+}
+
+export async function blenderPlayAnimation(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      "if bpy.context.screen:\n" +
+      "    bpy.ops.screen.animation_play()\n" +
+      "result = {'playing': True}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Play animation failed: ${err.message}`);
+  }
+}
+
+export async function blenderStopAnimation(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      "if bpy.context.screen and bpy.context.screen.is_animation_playing:\n" +
+      "    bpy.ops.screen.animation_play()\n" +
+      "result = {'playing': False}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Stop animation failed: ${err.message}`);
+  }
+}
+
+export async function blenderInsertKeyframe(
+  registry: WorkspaceRegistry,
+  input: { workspaceId: string; objectName: string; properties?: string[]; frame?: number },
+): Promise<ToolResponse> {
+  try {
+    const client = getBlenderClient(input.workspaceId);
+    const props = input.properties ?? ["location", "rotation_euler", "scale"];
+    const frame = input.frame;
+    const res = await client.sendExecute(
+      "import bpy\n" +
+      `object_name = ${JSON.stringify(input.objectName)}\n` +
+      `properties = ${JSON.stringify(props)}\n` +
+      `frame = ${frame ?? "None"}\n` +
+      "obj = bpy.data.objects.get(object_name)\n" +
+      "if obj is None:\n" +
+      "    raise RuntimeError('Object not found: ' + object_name)\n" +
+      "if frame is not None:\n" +
+      "    bpy.context.scene.frame_set(frame)\n" +
+      "for prop in properties:\n" +
+      "    if hasattr(obj, prop):\n" +
+      "        obj.keyframe_insert(data_path=prop)\n" +
+      "result = {'object': obj.name, 'keyframed': [p for p in properties if hasattr(obj, p)], 'frame': bpy.context.scene.frame_current}\n",
+    );
+    return textResponse(JSON.stringify(res, null, 2));
+  } catch (err: any) {
+    return errorResponse(`Insert keyframe failed: ${err.message}`);
+  }
+}
+

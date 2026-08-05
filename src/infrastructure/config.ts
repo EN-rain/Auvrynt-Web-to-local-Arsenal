@@ -57,7 +57,7 @@ export interface SerenaServerConfig {
   maxInstances: number;
 }
 
-export const MAX_MCP_SESSIONS = 999;
+export const MAX_MCP_SESSIONS = 99999;
 export const MIN_SESSION_IDLE_TIMEOUT_MS = 60 * 1000;
 export const DEFAULT_SESSION_IDLE_TIMEOUT_MS = 12 * 60 * 60 * 1000;
 export const MAX_SESSION_IDLE_TIMEOUT_MS = 7 * 24 * 60 * 60 * 1000;
@@ -85,6 +85,7 @@ export interface ServerConfig {
   executables: AuvryntExecutablesConfig;
   integrations: Required<AuvryntIntegrationsConfig>;
   tunnelProvider: TunnelProviderSetting;
+  cloudflareTunnelToken?: string;
   ngrokAuthtoken?: string;
   ngrokUrl?: string;
 }
@@ -330,9 +331,14 @@ function parseOAuthConfig(
     allowedRedirectHosts: parseStringList(env.AUVRYNT_OAUTH_ALLOWED_REDIRECT_HOSTS, [
       "grok.com",
       "console.x.ai",
+      "x.ai",
       "chatgpt.com",
+      "openai.com",
       "claude.ai",
       "claude.com",
+      "claude.site",
+      "useclaude.ai",
+      "anthropic.com",
       "oauth.lovable.app",
       "lovable.app",
       "lovable.dev",
@@ -409,15 +415,15 @@ function parseOptionalIntegrationBoolean(value: unknown, name: string): boolean 
 function parseIntegrationsConfig(env: NodeJS.ProcessEnv, filesConfig: AuvryntUserConfig): Required<AuvryntIntegrationsConfig> {
   const configIntegrations = filesConfig.integrations ?? {};
   return {
-    godotGdscript: parseOptionalIntegrationBoolean(env.AUVRYNT_GODOT_GDSCRIPT_ENABLED, "AUVRYNT_GODOT_GDSCRIPT_ENABLED") ?? configIntegrations.godotGdscript ?? true,
-    godotCsharp: parseOptionalIntegrationBoolean(env.AUVRYNT_GODOT_CSHARP_ENABLED, "AUVRYNT_GODOT_CSHARP_ENABLED") ?? configIntegrations.godotCsharp ?? true,
-    blender: parseOptionalIntegrationBoolean(env.AUVRYNT_BLENDER_ENABLED, "AUVRYNT_BLENDER_ENABLED") ?? configIntegrations.blender ?? true,
-    aseprite: parseOptionalIntegrationBoolean(env.AUVRYNT_ASEPRITE_ENABLED, "AUVRYNT_ASEPRITE_ENABLED") ?? configIntegrations.aseprite ?? true,
+    godotGdscript: parseOptionalIntegrationBoolean(env.AUVRYNT_GODOT_GDSCRIPT_ENABLED, "AUVRYNT_GODOT_GDSCRIPT_ENABLED") ?? configIntegrations.godotGdscript ?? false,
+    godotCsharp: parseOptionalIntegrationBoolean(env.AUVRYNT_GODOT_CSHARP_ENABLED, "AUVRYNT_GODOT_CSHARP_ENABLED") ?? configIntegrations.godotCsharp ?? false,
+    blender: parseOptionalIntegrationBoolean(env.AUVRYNT_BLENDER_ENABLED, "AUVRYNT_BLENDER_ENABLED") ?? configIntegrations.blender ?? false,
+    aseprite: parseOptionalIntegrationBoolean(env.AUVRYNT_ASEPRITE_ENABLED, "AUVRYNT_ASEPRITE_ENABLED") ?? configIntegrations.aseprite ?? false,
     serena: parseOptionalIntegrationBoolean(
       env.AUVRYNT_SERENA_INTEGRATION_ENABLED ?? env.AUVRYNT_SERENA_ENABLED,
       "AUVRYNT_SERENA_INTEGRATION_ENABLED",
     ) ?? configIntegrations.serena ?? filesConfig.serena?.enabled ?? false,
-    playwright: parseOptionalIntegrationBoolean(env.AUVRYNT_PLAYWRIGHT_ENABLED, "AUVRYNT_PLAYWRIGHT_ENABLED") ?? configIntegrations.playwright ?? true,
+    playwright: parseOptionalIntegrationBoolean(env.AUVRYNT_PLAYWRIGHT_ENABLED, "AUVRYNT_PLAYWRIGHT_ENABLED") ?? configIntegrations.playwright ?? false,
   };
 }
 
@@ -473,6 +479,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     executables: parseExecutablesConfig(env, files.config),
     integrations,
     tunnelProvider: parseTunnelProvider(env.AUVRYNT_TUNNEL_PROVIDER, files.config.tunnelProvider),
+    cloudflareTunnelToken: env.AUVRYNT_CLOUDFLARE_TUNNEL_TOKEN?.trim() || files.auth.cloudflareTunnelToken,
     ngrokAuthtoken: resolveNgrokAuthtoken(files, env),
     ngrokUrl: normalizeNgrokUrl(env.AUVRYNT_NGROK_URL ?? files.config.ngrokUrl),
   };

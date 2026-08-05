@@ -85,10 +85,55 @@ async function resolveCloudflaredExecutable(): Promise<string> {
 
 export async function startCloudflareTunnel(
   port: number,
-  options: { detached?: boolean; logPath?: string } = {},
+  options: { detached?: boolean; logPath?: string; cloudflareTunnelToken?: string; publicUrl?: string } = {},
 ): Promise<TunnelProcess> {
   const executable = await resolveCloudflaredExecutable();
-  const args = ["tunnel", "--no-autoupdate", "--url", `http://127.0.0.1:${port}`];
+  const args = options.cloudflareTunnelToken
+    ? ["tunnel", "--no-autoupdate", "run"]
+    : ["tunnel", "--no-autoupdate", "--url", `http://127.0.0.1:${port}`];
+
+  if (options.cloudflareTunnelToken && !options.publicUrl) {
+    throw new Error("A public URL is required when starting a Cloudflare Named Tunnel.");
+  }
+
+  if (options.cloudflareTunnelToken) {
+    let stdio: any = ["ignore", "pipe", "pipe"];
+    let logHandle: number | undefined;
+    if (options.detached && options.logPath) {
+      await writeFile(options.logPath, "", { mode: 0o600 });
+      logHandle = openSync(options.logPath, "a");
+      stdio = ["ignore", logHandle, logHandle];
+    }
+    const child = spawn(executable, args, {
+      stdio,
+      windowsHide: true,
+      detached: options.detached,
+      env: { ...process.env, TUNNEL_TOKEN: options.cloudflareTunnelToken },
+    });
+    if (logHandle !== undefined) closeSync(logHandle);
+    try {
+      const deadline = Date.now() + (options.logPath ? 30_000 : 1_500);
+      let registered = !options.logPath;
+      while (Date.now() < deadline) {
+        if (!child.pid || !isProcessRunning(child.pid)) throw new Error("Cloudflare Named Tunnel exited before connecting.");
+        if (options.logPath) {
+          const output = await readFile(options.logPath, "utf8").catch(() => "");
+          if (Buffer.byteLength(output, "utf8") > MAX_STARTUP_OUTPUT_BYTES) {
+            throw new Error("Cloudflare Named Tunnel startup output exceeded 1 MB before registering.");
+          }
+          registered = /Registered tunnel connection/i.test(output);
+        }
+        if (registered) break;
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+      }
+      if (!registered) throw new Error("Cloudflare Named Tunnel did not register with Cloudflare within 30 seconds.");
+      if (options.detached) child.unref();
+      return { process: child, url: options.publicUrl! };
+    } catch (error) {
+      child.kill();
+      throw error;
+    }
+  }
 
   if (options.detached && options.logPath) {
     await writeFile(options.logPath, "", { mode: 0o600 });

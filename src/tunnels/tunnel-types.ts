@@ -11,6 +11,8 @@ export interface TunnelStartOptions {
   logPath?: string;
   ngrokAuthtoken?: string;
   ngrokUrl?: string;
+  cloudflareTunnelToken?: string;
+  publicUrl?: string;
 }
 
 export interface ManagedTunnelOptions {
@@ -19,6 +21,8 @@ export interface ManagedTunnelOptions {
   provider: TunnelProvider;
   ngrokAuthtoken?: string;
   ngrokUrl?: string;
+  cloudflareTunnelToken?: string;
+  publicUrl?: string;
 }
 
 export interface ManagedTunnelResult {
